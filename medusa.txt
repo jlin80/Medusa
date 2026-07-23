@@ -1,0 +1,1077 @@
+﻿================================================================================
+MEDUSA — DOCUMENTACIÓN DEL PROYECTO
+Bot profesional de trading automatizado para Polymarket
+Host: Proxmox CT202 (192.168.100.42, hostname "medusa") — solo host Docker
+Proyecto local:  C:\Users\jinlh\OneDrive\Documents\Projects\Medusa
+Proyecto en CT:  /opt/medusa
+
+Última actualización: 2026-07-23 — DISEÑO V4 "Event Intelligence Layer" (solo
+documento técnico, aún SIN código): docs/EVENT_INTELLIGENCE_LAYER.md. Evolución
+incremental a Probability Intelligence Engine: 5 módulos de features EXTERNAS al
+precio (wallet, cross_market, temporal, context_memory, news_event), MetaModel
+(fusión por régimen, es una Strategy => triple candado intacto), Calibration
+Engine (Brier/ECE/MCE/reliability, recalibra), Model Registry (active/candidate/
+historical + rollback), Online Learning nocturno (resolver→entrenar→walk-forward→
+gauntlet→activar-si-mejora, fail-closed), Bayesian Allocation (prior Beta-Binomial
+opt-in, sin esperar 30 muestras), Uncertainty propagada al sizing, Up/Down como
+plugins (Brownian default + Student-T/Jump/Heston/RegimeSwitch/EVT). TODO aditivo,
+opt-in, default apagado = comportamiento idéntico a hoy. Prioridad P0→P3 y
+criterio de promoción estadístico (bate precio-solo out-of-sample tras 2.2% de
+peaje) en el propio documento. Anterior:
+2026-07-16 19:20 — V3 Fase A (Intelligence Layer) + doble
+cota maker/taker + 4 bugs graves resueltos. Sección 4-quater responde con datos
+"¿por qué no gana dinero?" y por qué "con Hermes se veía que sí".
+Nota: por indicación del usuario (2026-07-15), este archivo es un documento vivo
+que se mantiene actualizado; y CADA cambio o hallazgo se registra aquí en el
+momento (sección 7, historia cronológica, más las secciones afectadas).
+================================================================================
+
+
+--------------------------------------------------------------------------------
+1. ESTADO ACTUAL (TL;DR)
+--------------------------------------------------------------------------------
+- DESPLEGADO Y CORRIENDO 24/7 EN PAPER en CT202. Los 5 contenedores healthy,
+  selftest OK, contabilidad cuadrada a $0.00 de desvío.
+- 2026-07-16: EVOLUCIONADO A SISTEMA DE INTELIGENCIA MULTI-ESTRATEGIA (sección
+  4-bis): escáner global de TODO Polymarket, clasificador por categorías,
+  pre-scorer con ranking dinámico, 6 estrategias independientes en SHADOW,
+  tracking de señales resueltas contra el resultado real y asignación de
+  capital por rendimiento medido. DESPLEGADO Y VERIFICADO EN CT202 (selftest
+  completo OK; 500 mercados -> 163 escaneables en 8 categorías por ciclo).
+- OJO (2026-07-16): el engine llevaba 9 h PARADO. Alguien lo detuvo con SIGTERM
+  a las 04:02:49 UTC (apagado limpio, Exited(0)) y `restart: unless-stopped` NO
+  revive un contenedor parado a propósito. El deploy lo revivió. Si el bot
+  aparece "sin actividad", comprobar SIEMPRE `docker ps -a` (compose ps sin -a
+  no lista lo que está parado): 4 de 5 contenedores healthy puede parecer
+  normal de un vistazo.
+- SIGUE DELIBERADAMENTE PLANO: el estudio de calibración (sección 3) demostró
+  que el precio solo no da edge. Ahora TODAS las estrategias corren en shadow
+  (registran señales sin arriesgar un dólar) y ninguna puede operar hasta
+  acumular >=30 señales resueltas con ROI cuyo límite inferior (media -
+  1.64*std/sqrt(n)) supere 0. STRATEGIES_LIVE_ENABLED="" por defecto.
+- Ventana de validación paper: arrancó 2026-07-16 00:07 UTC (sobrevive a
+  redeploys; vive en bot_state.paper_start_at). Con el bot plano, el gate de
+  Live (>=30 trades, ROI>0) es inalcanzable A PROPÓSITO: sin edge no hay live.
+- Lo que falta para que esto gane dinero NO cambió: una señal con edge real.
+  La diferencia es que ahora Medusa la BUSCA sola, con datos, en todo el
+  universo de Polymarket, en vez de esperar a que alguien la diseñe.
+
+
+--------------------------------------------------------------------------------
+2. ACCESO Y OPERACIÓN
+--------------------------------------------------------------------------------
+- SSH:       ssh root@192.168.100.42   (clave ~/.ssh/id_ed25519)
+             OJO: .42 ES el CT202 (no el host Proxmox; no tiene pct).
+- Dashboard: http://192.168.100.42:8080   (solo LAN/VPN; sin login por diseño)
+- Proyecto:  /opt/medusa  (compose, .env con permisos 600, logs/, secrets/)
+- Verificar: docker ps -a          (¡con -a! sin él no ves lo que está parado)
+             docker compose run --rm --no-deps engine python scripts/selftest.py
+             curl http://127.0.0.1:8080/api/health | /api/status | /api/validation
+  *** NO usar `docker compose exec engine python scripts/selftest.py` (el
+  comando que estaba documentado hasta el 2026-07-16): `exec` mete un segundo
+  intérprete Python DENTRO del cgroup del engine, entre los dos revientan el
+  mem_limit de 512 MB y el kernel mata al proceso más grande: EL ENGINE. Medido:
+  exit 137 (SIGKILL) y el bot caído. `run --rm --no-deps` crea un contenedor
+  aparte con su propio límite y no toca al engine (verificado: selftest OK y
+  engine intacto). La caja tenía 2.3 GB libres: no era falta de RAM del host,
+  era el límite del contenedor.
+- Deploy:    editar en local -> scp a /opt/medusa/<ruta exacta> ->
+             bash scripts/deploy.sh   (build + permisos bind mounts + up -d)
+             CUIDADO con scp: usar SIEMPRE ruta destino completa; un scp de
+             prediction/engine.py a un directorio común pisó medusa/engine.py
+             una vez (se restauró en el acto).
+- Hardware:  2 vCPU AMD G-T56N (muy débil), 3 GB RAM sin swap, 32 GB disco.
+             Docker CE 29.6.1 oficial (el docker.io/buildx de Debian era viejo
+             para el plugin compose). Consumo de Medusa: ~162 MB RAM, 1.6 GB disco.
+
+
+--------------------------------------------------------------------------------
+3. VEREDICTO DE INVESTIGACIÓN: POLYMARKET ESTÁ BIEN CALIBRADO (2026-07-16)
+--------------------------------------------------------------------------------
+Herramienta: research/calibration_study.py
+  (correr con: docker compose exec engine python research/calibration_study.py 3000)
+
+Método: 2068 mercados YA RESUELTOS (dedup por token; Gamma corta la paginación
+en offset ~2100), 1856 con histórico usable. UNA muestra por mercado (no todos
+los puntos horarios: eso infla la muestra contando el mismo mercado cientos de
+veces y fabrica sesgos). Intervalos de Wilson (Wald colapsa en proporciones
+extremas). Doble horizonte: [B] a T-24h del final y [C] a mitad de vida como
+control de robustez contra el colapso pre-resolución.
+
+Resultado:
+  - [A] método ingenuo (112,927 puntos): sesgos enormes (+0.10) = ARTEFACTO.
+  - [B] n=788: 0 de 7 cubos con sesgo significativo.
+  - [C] n=581: 0 de 6 significativos; los signos se voltean entre [B] y [C].
+
+VEREDICTO: el precio ES la probabilidad. No hay edge direccional en el nivel de
+precio por sí solo; operarlo solo paga el spread. El baseline de reversión a la
+media no estaba "mal ajustado": apostaba contra un mercado que acierta. El paper
+lo confirmó en vivo: ROI -7.9% en ~3h con el baseline activo.
+
+Consecuencia aplicada: REVERSION_K pasó de constante 0.10 a setting con default
+0.0 (sin señal -> todo "skip"). Reactivable vía REVERSION_K en .env solo para
+experimentos, a sabiendas de que los datos dicen que pierde. Un modelo futuro
+necesita información EXTERNA al precio (noticias, datos deportivos/electorales,
+etc.), no el precio contra sí mismo. (Mismo patrón que los veredictos de
+scalping/ML/M1 en QuantEngine.)
+
+Dato de costes (medido, no supuesto): los mercados de precio extremo (0.04-0.14)
+tienen spread RELATIVO del 2-8% y hasta 27%; los líquidos (Messi/Argentina/Fed)
+0.1-0.2%. Una ida y vuelta sin que el precio se mueva pierde ~2.2%. Ese es el
+listón que cualquier señal futura debe batir.
+
+OTRAS VÍAS DE EDGE EXAMINADAS CON DATOS REALES (2026-07-15 noche):
+  a) Arbitraje intra-mercado (research/arb_scan.py): comprar YES+NO por < $1 =
+     ganancia sin riesgo. Escaneados 110 mercados activos con ambos libros:
+     CERO oportunidades. El mínimo de ask_YES+ask_NO fue $1.001 (mediana
+     $1.003) y el lado venta (bid_YES+bid_NO > $1) también vacío. Los bots
+     dedicados lo aspiran en segundos. Una sola foto no es veredicto definitivo
+     (conviene repetir a distintas horas), pero la primera medición da 0.
+  b) Momentum (research/momentum_study.py): ¿el CAMBIO de precio T-48h→T-24h
+     predice el resultado más allá del NIVEL de precio? (sub-reacción =
+     continuación explotable; sobre-reacción = reversión). Estratificado por
+     cubos de precio, Wilson por celda, resumen Mantel-Haenszel.
+     PASE 1 (umbral ±0.02): NO CONCLUYENTE por falta de potencia — solo 563
+     mercados con 48h de histórico y 342 cayeron en FLAT; ningún cubo tuvo UP y
+     DOWN suficientes a la vez. Hay UNA celda llamativa (0.35-0.50 UP, n=32:
+     precio 0.431 → 62.5% real, +0.19 "significativo") pero es 1 celda de ~18
+     testeadas: con comparaciones múltiples eso es lo que produce el azar. Es
+     una pista, NO evidencia.
+     PASE 2 (umbral ±0.005, casi puro signo, duplica muestra UP/DOWN a
+     199/206): SIN SEÑAL. Delta estratificado (UP - DOWN) = +0.0121, z = +0.17,
+     IC95 [-0.13, +0.16]. La celda "llamativa" del pase 1 se desinfló (+0.194 →
+     +0.151) y con contraparte DOWN la comparación no da nada: era el falso
+     positivo esperado por comparaciones múltiples.
+     CONCLUSIÓN: el movimiento reciente del precio NO añade información sobre
+     el resultado más allá del propio nivel. Ni continuación ni reversión
+     explotables a este horizonte.
+
+  RESUMEN DE LA BÚSQUEDA DE EDGE (3 vías medidas, 3 muertas):
+     nivel de precio (calibración) ✗ · momentum ✗ · arb intra-mercado ✗.
+     Todo lo extraíble del PRECIO está agotado. El edge, si existe, está en
+     información EXTERNA (noticias, datos deportivos/electorales, velocidad de
+     incorporación de eventos). Esa es la única dirección que queda para el
+     Prediction Engine.
+
+
+--------------------------------------------------------------------------------
+4. ARQUITECTURA
+--------------------------------------------------------------------------------
+5 contenedores (docker-compose, red interna medusa-net, único puerto expuesto
+8080, restart unless-stopped, mem_limit por servicio para caber en 3 GB):
+  - medusa-postgres  postgres:16-alpine   estado durable (fuente de verdad)
+  - medusa-redis     redis:7-alpine       bus de eventos + cache + flags
+  - medusa-engine    medusa-core:latest   pipeline de trading (Python 3.12 asyncio)
+  - medusa-api       medusa-core:latest   FastAPI: REST + WebSocket + toggle
+  - medusa-dashboard nginx:alpine         HTML/JS vanilla (React descartado: sin
+                                          build, sin node_modules)
+
+Pipeline del engine (ciclo cada 60s; rediseñado 2026-07-16, ver sección 4-bis):
+  escaneo global (throttled 5 min) -> clasificar -> pre-score -> top-K análisis
+  profundo -> estrategias (todas registran señal) -> asignación de capital ->
+  risk -> execution(paper|live)
+  1. Primero gestiona lo abierto (TP/SL/liquidación por resolución): proteger
+     antes de arriesgar.
+  2. MarketScanner global: pagina la Gamma API (universo completo, hasta
+     SCAN_UNIVERSE_SIZE=500) SIN tocar el CLOB; clasifica y puntúa; solo el
+     top-K (PRESCORE_TOP_K=15) recibe order books e histórico.
+  3. StrategyManager: evalúa las 6 estrategias; toda señal se registra en
+     strategy_signals (shadow). El antiguo PredictionEngine quedó como shim
+     legacy; su lógica vive en strategies/mean_reversion.py (k=0).
+  4. AllocationManager: peso por (estrategia, categoría) desde señales
+     RESUELTAS. Sin >=30 muestras o sin ROI con límite inferior > 0: peso 0.
+  5. RiskManager: edge mínimo, confianza, liquidez, exposición máxima, nº máx
+     posiciones, edge > coste*1.5 (_edge_beats_cost), pérdida diaria máxima.
+     El peso del asignador solo ESCALA el sizing; los límites duros no se
+     relajan nunca.
+  6. ExecutionAdapter: MISMA lógica paper/live; solo cambia el adaptador.
+     - Paper: simula contra el libro REAL nivel a nivel: paga ask / cobra bid
+       (nunca mid), slippage siempre en contra, fees fórmula Polymarket
+       (rate*min(p,1-p)), BOOK_DEPTH_FRACTION=0.5 -> fills parciales reales,
+       rechaza fills < 5 shares (orderMinSize real).
+     - Live: py-clob-client + wallet; NUNCA probado contra el CLOB real aún.
+  7. Reconciler (live): compara posiciones on-chain (Data API) contra la BD
+     antes de cada ciclo live; si no cuadra, degrada solo a PAPER.
+  8. Resolver de señales (throttled 30 min): marca ganada/perdida cada señal
+     cuyo mercado resolvió (1/0 limpio) y refresca los pesos de asignación.
+
+Contabilidad: record_entry/record_exit escriben orden + fills + posición +
+balance en UNA transacción (atomicidad verificada con reinicios en mitad de
+ciclo). Cierres parciales soportados (la posición se reduce proporcionalmente).
+
+Métricas/portfolio: ROI, win rate, drawdown, nº trades, edge medio; equity marca
+a bid (valor de liquidación real); TP/SL se evalúan sobre movimiento de mercado
+(mid vs entry_mid), no sobre el spread de entrada.
+
+Mantenimiento: poda diaria (30 días) de opportunities/equity/logs; trades,
+posiciones y mercados NO se podan. Logs estructurados (structlog) a stdout +
+fichero rotado; httpx/httpcore silenciados.
+
+Notificaciones: SOLO Discord webhook (inicio, cambio de modo, entradas/salidas,
+ganancia/pérdida, errores, fallos API, alertas de riesgo). Verificado entregando
+(HTTP 204). NOTIFY_OPPORTUNITIES=false para no inundar el canal.
+CAÍDAS DEL SERVICIO: watchdog en la API (2026-07-15 noche) — el engine no puede
+anunciar su propia muerte, así que la API (contenedor aparte) vigila su
+heartbeat cada 30s y notifica a Discord la caída (1 alerta + recordatorio cada
+30 min) y la recuperación. Con margen de 3 min al arrancar el stack para no dar
+falsas alarmas. Esto cierra el último punto del Mensaje 8 de las instrucciones
+originales que faltaba de verdad.
+WATCHDOG VERIFICADO END-TO-END (2026-07-16, con una caída REAL, no simulada):
+durante las 9 h que el engine estuvo parado emitió 18 alertas, una cada 30 min
+exactos (04:04 -> 12:34 UTC), con heartbeat_age creciente (5.516 s ... 30.722 s)
+y CERO fallos de envío a Discord. Era la única afirmación del documento sin
+verificar; ya no lo es.
+
+
+--------------------------------------------------------------------------------
+4-bis. SISTEMA INTELIGENTE MULTI-ESTRATEGIA (2026-07-16)
+--------------------------------------------------------------------------------
+OBJETIVO (instrucción del usuario): Medusa deja de ser un bot de cripto para
+ser un sistema de inteligencia de TODO Polymarket. No asume qué tipo de mercado
+o estrategia es mejor: lo descubre con datos. El objetivo no es operar más,
+sino operar menos y solo con ventaja estadística demostrada tras costes.
+
+MÓDULOS NUEVOS:
+  medusa/intelligence/
+    categories.py  Taxonomía como DATOS (keywords + mapeo de etiquetas Gamma):
+                   crypto, sports, politics, economy, tech, ai, climate,
+                   geopolitics, entertainment, other. Añadir categoría = añadir
+                   una entrada al dict; nada más cambia.
+    classifier.py  MarketClassifier: lista ordenada de reglas (registry); regla
+                   1 = pista de Gamma, regla 2 = keywords con \b y desempate
+                   por nº de matches + prioridad de especificidad. register()
+                   permite añadir clasificadores sin tocar el núcleo.
+    prescorer.py   OpportunityPreScorer: puntaje 0-100 SOLO con datos Gamma
+                   (liquidez, volumen, spread, coste de ejecución estimado,
+                   tiempo a resolución, actividad/rotación, variación 24h).
+                   Mide cuánto vale MIRAR un mercado, no hacia dónde va.
+                   Pesos fijos y documentados a propósito (no son .env: siete
+                   knobs más = siete formas de sobreajustar a mano).
+  medusa/strategies/
+    base.py        Strategy ABC + StrategySignal (score, confianza, explicación,
+                   condiciones de validez). El precio de entrada de una señal es
+                   el ASK REAL del libro: el shadow se mide contra lo que habría
+                   costado operar de verdad, no contra el mid.
+    manager.py     StrategyManager: 3 estados por estrategia — disabled (ni se
+                   evalúa), shadow (registra, no opera; DEFAULT), live (puede
+                   operar SI además el asignador le da peso > 0).
+    6 estrategias: mean_reversion (baseline legacy, k=0), momentum (Δ24h),
+                   order_book_imbalance (presión de profundidad en banda ±0.05
+                   del mid), liquidity_breakout (Δ1h + lado del libro fino),
+                   stat_arb (YES+NO fuera de $1; SOLO ALERTA: exige 2 patas
+                   simultáneas que el camino de órdenes no soporta),
+                   volatility_expansion (vol 6h vs base 48h con deriva; usa
+                   histórico CLOB /prices-history cacheado 15 min).
+                   Pendientes de datos EXTERNOS: wallet_consensus, cross_market
+                   _correlation, event_driven (la vía que los 3 estudios
+                   señalan como la única con edge posible).
+  medusa/allocation/
+    manager.py     AllocationManager: peso por (estrategia, categoría) desde
+                   señales RESUELTAS. Gate: n >= ALLOC_MIN_SAMPLES(30) Y límite
+                   inferior del ROI (media - 1.64*std/sqrt(n)) > 0; si la celda
+                   no tiene muestra cae al total de la estrategia. Peso en
+                   [0, 1.5]; multiplica el sizing del Risk Manager, JAMÁS
+                   relaja sus límites. Wilson para el win rate (mismo patrón
+                   que el estudio de calibración).
+
+DECISIONES DE DISEÑO CLAVE:
+  1. DOS RITMOS DE ESCANEO: universo completo cada 5 min (solo Gamma, ~5
+     requests paginados, dedup por condition_id) y análisis profundo cada
+     ciclo de 60s SOLO para el top-15 del ranking (books + histórico). Es lo
+     que permite mirar cientos de mercados con 2 vCPU sin castigar las APIs.
+     Medido en dry-run real: universo 500 -> 167 escaneables en 0.5s; ciclo
+     completo con 10 mercados profundos y 15 señales en 5.4s (presupuesto 60s).
+  2. SHADOW-FIRST: TODAS las señales se guardan en strategy_signals (dedup de
+     abiertas por estrategia+mercado+outcome) y se resuelven contra el
+     resultado real 1/0 del mercado. Ese historial ES el mecanismo de
+     descubrimiento: la pregunta "¿qué estrategia funciona en qué categoría?"
+     la responde la tabla, no una opinión. stat_arb se especial-casea (su
+     ganancia queda bloqueada al entrar, no depende del resultado).
+  3. NINGUNA RESTRICCIÓN MANUAL POR CATEGORÍA: el mecanismo existe
+     (Strategy.categories) pero por defecto ninguna estrategia se limita: el
+     usuario pidió NO asumir; restringir a mano sería asumir. Restringe el
+     asignador, con datos.
+  4. EL BOT SIGUE PLANO POR DEFECTO: STRATEGIES_LIVE_ENABLED="" y, aunque se
+     habilite una estrategia, sin historial suficiente su peso es 0. Doble
+     candado coherente con el veredicto de calibración.
+  5. COMPATIBILIDAD: mismos 5 contenedores, mismos endpoints previos, mismo
+     gate de Live, misma contabilidad atómica (ahora con atribución de
+     estrategia en positions/trades/opportunities). Migración de esquema
+     ligera e idempotente en init_db (ADD COLUMN IF NOT EXISTS; la BD del
+     CT202 no se resetea). PredictionEngine queda como shim legacy.
+
+API NUEVA: /intelligence/ranking, /intelligence/categories, /strategies
+(registro + rendimiento + pesos), /signals. Dashboard: fila nueva
+"Inteligencia" (ranking/categorías) y "Estrategias" (rendimiento/señales).
+Discord: alerta especial de arbitraje (arb_opportunity, throttled).
+
+CONFIG NUEVA (.env, defaults seguros): GLOBAL_SCAN_INTERVAL=300,
+SCAN_UNIVERSE_SIZE=500, PRESCORE_TOP_K=15, STRATEGIES_LIVE_ENABLED="",
+STRATEGIES_DISABLED="", SIGNAL_RESOLVE_INTERVAL=1800, ALLOC_MIN_SAMPLES=30,
+ALLOC_MAX_WEIGHT=1.5, más umbrales por estrategia (momentum_min_move=0.05,
+imbalance_min_ratio=0.55, breakout_min_move_1h=0.02, stat_arb_min_profit=
+0.005, vol_expansion_ratio=2.0).
+
+VERIFICACIÓN (2026-07-16, local): compileall OK; imports de engine/api/scanner
+OK; selftest ampliado con sección [7] Inteligencia (clasificador, pre-scorer,
+estrategias con libros sintéticos, stat_arb a 0.98, pesos del asignador) — 51
+checks locales OK (falla solo el gate de Live porque no hay Postgres local;
+en CT202 pasa); dry-run del pipeline completo contra Polymarket REAL: 15
+señales coherentes de 4 estrategias con explicación auditable. Hallazgo del
+dry-run ya corregido: los partidos "X vs Y" (tenis) caían en other -> keyword
+"vs" en sports con desempate por conteo (verificado sin regresión política).
+
+VERIFICACIÓN EN PRODUCCIÓN (2026-07-16, CT202, tras el deploy):
+  - selftest completo DENTRO del contenedor: TODO OK (incluidas las secciones
+    que en local no se pueden probar: gate de Live y cuadre contable).
+  - Migración de esquema aplicada sola en init_db: las 7 columnas nuevas
+    (markets.medusa_category/opportunity_score, opportunities.strategy/
+    category/score, positions.strategy, trades.strategy) + tabla
+    strategy_signals. Sin resetear la BD, sin pérdida de datos.
+  - Pipeline vivo: scan.universe fetched=500 -> scannable=163, clasificados en
+    8 categorías (sports 61, other 59, crypto 21, geopolitics 11, economy 5,
+    politics 4, ai 1, entertainment 1). El fix de "vs" se confirma en datos
+    reales: sports 31->61 y other 93->59 respecto al dry-run local.
+  - strategies.loaded: 6 en shadow, live=[] . alloc.refreshed cells=0 (sin
+    historial: nadie opera). A los pocos minutos ya había 22 señales abiertas
+    (momentum 14, order_book_imbalance 6, volatility_expansion 2).
+  - API: /health ok (db+redis), /status engine_alive=true, /intelligence/
+    categories, /intelligence/ranking y /strategies respondiendo; dashboard
+    HTTP 200 sirviendo el panel "Inteligencia · escáner global".
+  - Contabilidad exacta tras revivir: 717.21 efectivo + 200.00 en posiciones +
+    (-82.79) realizado = 1000.00 (desvío +0.00), 4 posiciones abiertas. Al
+    arrancar, el engine cerró las posiciones viejas que tocaba (el realizado
+    pasó de -50.33 a -82.79: coste hundido del baseline sin edge, ya conocido).
+
+
+--------------------------------------------------------------------------------
+4-ter. INTELLIGENCE LAYER — V3 FASE A (2026-07-16)
+--------------------------------------------------------------------------------
+OBJETIVO (instrucción del usuario): evolucionar de un bot basado en información
+del MERCADO a una plataforma de INTELIGENCIA para Polymarket. Incorporar
+información externa AL PRECIO (no externa a Polymarket). No operar más: operar
+con más calidad estadística. Evolución INCREMENTAL: nada de reescrituras, nada
+de romper compatibilidad. Ejecución SIEMPRE y SOLO en Polymarket.
+
+RESTRICCIÓN DE HARDWARE MEDIDA (2026-07-16, decisiva para el plan de ML):
+  CPU del T610 = AMD G-T56N (Bobcat). Flags: sse, sse2, pni, ssse3, sse4a.
+  NO tiene sse4_1, sse4_2, avx, avx2 ni fma. Verificado en la caja:
+    - numpy 2.x        -> Illegal instruction (core dumped), rc=132. MUERE.
+    - numpy 1.26.4     -> OK.
+    - lightgbm 4.6.0   -> OK (entrena y predice), con DOS condiciones:
+                          (a) apt install libgomp1 (no viene en python-slim;
+                              el primer fallo era esto, NO el CPU)
+                          (b) numpy<2 fijado.
+    - catboost         -> DESCARTADO: exige SSE4.2, que este CPU no tiene.
+  CONSECUENCIA: el ML del futuro es viable con LightGBM. Alternativa aún más
+  barata si se quiere evitar numpy en el runtime: entrenar fuera y exportar el
+  ensemble a inferencia en Python puro (recorrer árboles y sumar; microsegundos
+  para 15 mercados/ciclo). NO se han añadido numpy/lightgbm a la imagen: no hay
+  modelo que cargar ni histórico que entrenar todavía, y meter ~200 MB de
+  dependencias por nada viola la restricción de RAM mínima. Se añadirán el día
+  que exista un modelo, con numpy<2 y libgomp1.
+
+MÓDULOS NUEVOS (todos aditivos; NADA de lo existente se reescribió):
+  medusa/features/ (tabla `features`)
+    Feature Store centralizado y APPEND-ONLY. Es el "histórico propio" del que
+    saldrán los modelos: nunca sobreescribe. Índice compuesto
+    (market_id, name, ts DESC) porque la consulta caliente es DISTINCT ON.
+    Coste calculado: ~7.200 filas/día (~250 MB/año) sobre 31 GB libres.
+    Poda propia (FEATURE_RETENTION_DAYS=365), separada de la de alta frecuencia
+    (30 días): podar esto sería tirar el activo del layer.
+  medusa/intelligence_layer/
+    base.py    IntelligenceModule ABC + Feature. Un módulo SOLO puede devolver
+               list[Feature]. NO recibe el adapter de ejecución, ni el repo de
+               posiciones, ni el engine: aunque quisiera operar, NO TIENE CON
+               QUÉ. Desacoplado por construcción, no por disciplina.
+               Feature.value es SIEMPRE float; lo textual va en meta y jamás
+               llega al camino de decisión (así un LLM no puede decidir por la
+               puerta de atrás).
+    runner.py  Orquesta los módulos FUERA del ciclo de trading (loop propio).
+               Por módulo: wait_for(timeout) + try/except. Un módulo roto o
+               colgado no puede tumbar a los demás ni al engine. Lista BLANCA
+               (INTELLIGENCE_MODULES): un módulo solo corre si se le nombra.
+    microstructure.py  PRIMER módulo. Produce liquidity_score, orderbook_score,
+               volatility_score, execution_cost y book_imbalance. Coste CERO en
+               llamadas nuevas: reutiliza los libros/histórico que el ciclo de
+               trading YA trajo. needs_network=False.
+               OJO: describe la ESTRUCTURA del mercado, no la dirección. El
+               veredicto de calibración sigue en pie; esto NO es un edge.
+  medusa/strategies/phases.py
+    CICLO DE VIDA OBLIGATORIO: research -> shadow -> paper -> live_candidate.
+      research       no corre en el runtime (análisis histórico)
+      shadow         registra señales, NUNCA opera (DEFAULT)
+      paper          opera SOLO contra el motor Paper y solo con peso > 0
+      live_candidate única que puede tocar dinero real (con todos los gates)
+    *** CANDADO DURO: is_tradeable(PAPER, "live") == False. Una estrategia en
+    fase paper NO puede operar en live aunque el bot entero esté en modo LIVE.
+    Eso es lo que hace seguro dejar estrategias en paper. ***
+    Un typo en la fase (p.ej. "pepper") se ignora y cae a shadow: un error de
+    dedo en el .env jamás asciende una estrategia.
+
+DECISIONES DE DISEÑO:
+  1. "No modificar Scanner/Strategy Manager/Risk Manager..." se interpretó como
+     NO REESCRIBIR NI ROMPER, no como "no tocar jamás": el ciclo de 4 fases
+     exige que el StrategyManager conozca fases. Todos los cambios son
+     ADITIVOS y compatibles hacia atrás. STRATEGIES_LIVE_ENABLED (V2) sigue
+     funcionando y mapea a live_candidate; is_live() se conserva como alias.
+     El .env desplegado no necesitó cambios para seguir igual.
+  2. EL LAYER NO PUEDE BLOQUEAR EL TRADING. Loop independiente; el ciclo de
+     trading no lo espera nunca. Si el layer entero muere, Medusa escanea,
+     valora y gestiona salidas igual que antes de que existiera.
+  3. LAS FEATURES SE LEEN, NO SE CALCULAN, EN EL CICLO. El ciclo lee del
+     Feature Store (MarketContext.features). Si el store falla o está vacío,
+     las estrategias reciben {} y siguen funcionando: el layer AÑADE, su
+     ausencia nunca degrada lo que ya iba.
+  4. TRIPLE CANDADO PARA OPERAR: (a) la fase debe permitirlo EN ESE MODO,
+     (b) la señal debe ser ejecutable (stat_arb nunca lo es), (c) el asignador
+     debe dar peso > 0 (>=30 señales resueltas con ROI de límite inferior > 0).
+     Con la config por defecto (todo en shadow) no pasa ninguna.
+  5. FASE PAPER SOLO CON EVIDENCIA (decisión del usuario, 2026-07-16): el
+     mecanismo de Paper existe y es alcanzable, pero una estrategia asciende
+     cuando su historial en shadow lo justifica. No se promovieron las 6
+     estrategias de precio: la propia investigación dice que perderían, y el
+     objetivo es calidad estadística, no actividad.
+
+CONFIG NUEVA (toda opt-in, defaults seguros):
+  INTELLIGENCE_ENABLED=false (en código) — ACTIVADO a true en el .env del CT202
+    para que el histórico empiece a acumularse desde ya (instrucción de Data
+    Pipeline). Ponerlo a false apaga toda la capa sin tocar código.
+  INTELLIGENCE_MODULES=microstructure   (lista blanca)
+  INTELLIGENCE_INTERVAL=300 (despertar del loop; cada módulo tiene su interval;
+    microstructure=900)
+  FEATURE_RETENTION_DAYS=365
+  STRATEGY_PHASES=""  (vacío = todas en shadow = bot plano)
+
+API NUEVA: /intelligence/modules (registro + estado del store), /features
+(histórico crudo), /features/latest?market_id=... (lo que ve una estrategia).
+
+MÓDULOS PREVISTOS (cada uno es un fichero más; el layer no cambia):
+  wallet        reputación de wallets (win rate, ROI, Sharpe, nº ops,
+                especialidad, mercados favoritos, actividad, consistencia)
+                -> wallet_score. Data API de Polymarket, sin claves.
+                NO es copy trading: produce una feature, jamás una orden.
+  cross_market  relaciones entre mercados -> cross_market_score.
+  news/event    requieren fuente externa (decisión del usuario 2026-07-16:
+                empezar SOLO con Polymarket; news/event quedan como interfaz).
+  sports/politics/crypto  features por categoría.
+
+VERIFICACIÓN (2026-07-16): selftest sección [8] con 26 checks — features del
+módulo, normalización, aislamiento de un módulo que revienta y de otro colgado
+(timeout), layer apagado = no corre nada, las 4 fases y el candado
+paper-no-toca-live, y default = 6 estrategias en shadow sin operar. Todo OK en
+local Y dentro del contenedor. Tabla `features` migrada sola con su índice
+compuesto. Contabilidad intacta: 757.41 + 150.00 - (-92.59) = 1000.00.
+
+
+--------------------------------------------------------------------------------
+4-quater. POR QUÉ MEDUSA NO GANA DINERO (2026-07-16) — LA RESPUESTA, CON DATOS
+--------------------------------------------------------------------------------
+Pregunta del usuario: "no entiendo por qué el bot no genera dinero, si con
+Hermes se veía que sí".
+
+RESPUESTA 1: PORQUE NO ESTÁ OPERANDO. Cero posiciones abiertas desde que se
+neutralizó el baseline. No puede ganar: no está jugando. Es deliberado.
+
+RESPUESTA 2: LOS 8 TRADES QUE SÍ HIZO (01:00-13:00 UTC del 07-16) explican el
+resto. PnL total -92.59, coste de ejecución 74.18 => EL 80% DE LA PÉRDIDA ES EL
+PEAJE DE OPERAR, no predecir mal. Todos los precios de entrada entre 0.042 y
+0.178 (extremos), con coste del 4% al 58% del notional.
+El trade que lo resume: entró a 0.059, salió a 0.095 -- el mercado se movió +61%
+A SU FAVOR -- y de los 19.96 ganados, 19.59 se los comió el coste.
+
+RESPUESTA 3: EL BASELINE ESTABA CONDENADO POR CONSTRUCCIÓN. La reversión tira
+hacia 0.5, así que su "edge" aparente es MÁXIMO justo en los precios extremos
+(0.05 -> 0.5 parece +45 puntos), que son exactamente los mercados con spread
+relativo del 15-58%. La fuerza de su señal y el coste del mercado estaban
+perfectamente correlacionados: elegía siempre los peores mercados posibles.
+(Las estrategias nuevas ya no caen en la trampa: de 113 señales, 96 en precios
+operables y solo 17 en extremos.)
+
+RESPUESTA 4 — EL PORQUÉ DE "CON HERMES SE VEÍA QUE SÍ": HERMES Y MEDUSA NO MIDEN
+LO MISMO. La propia doc de Hermes en Notion define dos cotas de PnL:
+    pnl_maker  "posté límite, me llenaron al mejor bid", fee 0%  -> OPTIMISTA (TECHO)
+    pnl_taker  "crucé el spread + fee taker cripto"              -> REALISTA/PESIMISTA
+y admite: "Hermes v1.1 hoy solo trackea el equivalente al pnl_maker... No
+calcula todavía la cota pnl_taker... sin esa cota pesimista, no hay forma de
+saber si el edge sobrevive a una ejecución realista".
+=> Hermes nunca enseñó beneficio: enseñaba EL TECHO. Medusa calcula la otra cota
+(paga ask, cobra bid, slippage en contra, fills parciales). No es que Medusa vaya
+peor: es que Medusa enseña la cota que decide.
+PRUEBA CON LOS MISMOS 8 TRADES: medidos a la manera de Hermes (fill ideal, sin
+cruzar spread, 0% fee) darían -92.59 + 74.18 = -18.41 en vez de -92.59. Los
+mismos trades se ven 5 VECES MEJOR solo por el supuesto de ejecución. Y ojo:
+incluso al techo optimista siguen siendo negativos -- no había edge ni
+regalándole la ejecución.
+DESCOMPOSICIÓN HONESTA del -92.59:
+    -18.41  no hay edge direccional (ruido de 8 tiradas; la calibración ya lo
+            predecía: ~0 esperado)
+    -74.18  el peaje, que se paga SIEMPRE, aciertes o no
+    => se paga un peaje CIERTO a cambio de un cara-o-cruz.
+
+CONSECUENCIA APLICADA: se portó la doble cota del bot Python a Medusa (ver
+4-quinquies). Ningún bug explica la falta de beneficio y ninguna optimización la
+va a crear: el listón es batir ~2.2% de ida y vuelta con información que el
+mercado no tenga. Por eso la Fase B es Wallet Intelligence.
+
+
+--------------------------------------------------------------------------------
+4-quinquies. DOBLE COTA DE PnL EN LAS SEÑALES (2026-07-16)
+--------------------------------------------------------------------------------
+Portada la metodología del bot Python/Hermes, pero completa (las DOS cotas):
+    entry_price       = ASK real -> crucé el spread     (TAKER, realista)
+    entry_price_maker = BID real -> me llenaron al bid  (MAKER, techo)
+Al resolver se calculan pnl/roi en ambas: pnl_per_share/roi (taker) y
+pnl_maker/roi_maker. El gap ES el spread.
+
+MANDA LA TAKER: el Capital Allocation Manager usa SOLO avg_roi (taker) para dar
+peso. La maker es diagnóstico: si el techo es bonito y el real negativo, la
+estrategia no tiene negocio. Ese contraste es justo lo que Hermes no puede
+enseñar, y ahora se ve en el dashboard (columnas "ROI techo (maker)" / "ROI real
+(taker)" / "Peaje spread").
+
+Detalle que importa: mantener a resolución solo paga el spread UNA vez (a la
+entrada); la resolución liquida a 1/0 sin libro ni coste. Por eso el gap
+maker-taker de una señal es exactamente (ask - bid).
+El lado NO sin libro propio se DERIVA del YES (NO_ask = 1 - YES_bid) para
+preservar el spread real; caer al mid haría maker == taker y borraría el peaje,
+fabricando la misma ilusión que este trabajo existe para destapar.
+stat_arb se excluye de la cota maker: su entrada es el precio del PAR, no un
+lado con bid/ask.
+Verificado (selftest [8]): con bid 0.40 / ask 0.44 y settle 1.0 -> maker +150.0%
+vs taker +127.3%; el techo infla 22.7 puntos SOLO por el supuesto de fill.
+
+BUG RELACIONADO Y ARREGLADO: las señales calculaban spread y liquidity y
+save_signals LOS TIRABA (la tabla ni tenía las columnas). Sin el spread del
+momento de la señal, el histórico NO PUEDE responder "¿hay edge después de
+costes?" -- y el asignador podría ascender una estrategia por un ROI logrado en
+mercados con spread imposible. Ahora se persisten (NULLABLE: NULL = "no se
+registró"; un 0.0 mentiría diciendo "operar era gratis") y
+strategy_performance(tradeable_only=True) solo cuenta señales que el Risk
+Manager habría aprobado (edge > spread * EDGE_COST_RATIO).
+OJO: las señales abiertas anteriores al fix se quedan con NULL — el dedup de
+señales abiertas impide re-emitirlas, y no se puede inventar el bid de entonces.
+
+
+--------------------------------------------------------------------------------
+5. SEGURIDAD Y GATE DE LIVE
+--------------------------------------------------------------------------------
+- Gate de Live: >=7 días de paper AND >=30 trades cerrados AND ROI>0 (el ROI>0
+  se añadió por iniciativa propia: desbloquear dinero real con una estrategia
+  que pierde en paper no tiene defensa).
+- Activar LIVE exige 3 cosas simultáneas: live_unlocked + frase exacta
+  "ACTIVAR LIVE" en el toggle del dashboard + PRIVATE_KEY/WALLET_ADDRESS en el
+  entorno. El engine se degrada solo a PAPER si LIVE está puesto sin desbloquear
+  o si la reconciliación on-chain no cuadra.
+- Secretos SOLO por .env (600, nunca en git).
+- Webhook de Discord: se compartió en texto plano y queda expuesto. DECISIÓN DEL
+  USUARIO (2026-07-15): se acepta el riesgo y se deja como está. NO es un
+  pendiente. (Este fichero lo listó como "PENDIENTE" hasta el 07-16 por un
+  desfase con Notion; corregido en la auditoría de sincronización.)
+- Dashboard sin auth por requisito -> el único control de acceso es la red.
+  SOLO LAN/VPN. Jamás exponer el 8080 a Internet.
+
+
+--------------------------------------------------------------------------------
+6. BUGS IMPORTANTES ENCONTRADOS Y RESUELTOS (los que enseñan algo)
+--------------------------------------------------------------------------------
+1. ATOMICIDAD (grave): cobrar balance y registrar posición iban en transacciones
+   separadas; un reinicio en medio perdió 50 USDC en paper (en live habría sido
+   una posición real sin seguimiento). Fix: record_entry/record_exit atómicos.
+   Verificado con 4 reinicios en mitad de ciclo: desvío 0.00.
+2. STOP-LOSS SOBRE EL SPREAD: una posición nace marcada a -(spread relativo)
+   (compras ask, marcas bid); con spreads del 15-27% el stop saltaba al ciclo
+   siguiente de entrar (churn puro). Fix: TP/SL sobre mid vs entry_mid.
+3. KILL-SWITCH QUE MATABA EL RUN: max_daily_loss_pct era drawdown total
+   latcheado -> un -10% acumulado paraba el bot para siempre en un run
+   desatendido. Fix: pérdida DIARIA vs equity de apertura del día; se auto-
+   levanta al cambiar el día UTC solo si lo puso el bot (kill_switch_auto).
+4. CIERRE PARCIAL (record_exit): una venta con fill parcial cerraba la posición
+   ENTERA con proceeds parciales -> las shares no vendidas desaparecían de la
+   contabilidad. Fix: cierre parcial proporcional; la posición sigue abierta.
+5. DUST: posiciones < 5 shares (orderMinSize) reintentaban venderse cada ciclo
+   con rechazo garantizado. Fix: guard; las liquida la resolución.
+6. ESTUDIO DE CALIBRACIÓN: (a) la paginación de Gamma repetía mercados entre
+   páginas -> dedup por token; (b) IC de Wald fabricaba significancias falsas en
+   proporciones extremas -> Wilson; (c) circularidad del colapso pre-resolución
+   -> tabla [C] a mitad de vida como control.
+7. KILL-SWITCH QUE SE QUEDABA PUESTO PARA SIEMPRE (grave; 2026-07-16). El bug
+   #3 otra vez, por otro camino y sobreviviendo a su propio arreglo.
+   _cycle() empezaba con:
+       if await state.get_kill_switch(): log.warning(...); return
+   Ese `return` estaba ANTES de todo, y provocaba tres cosas a la vez:
+   (a) NO se gestionaban las posiciones abiertas: el kill-switch saltaba porque
+       se estaba perdiendo dinero y su reaccion era dejar de vigilar TP/SL/
+       liquidacion por resolucion. En live, una posicion podia atravesar su
+       stop-loss sin que nadie la cerrase. Invertia el principio central del
+       propio engine ("primero se protege lo que ya esta en riesgo").
+   (b) NO se tomaban snapshots de equity (hueco en la curva) ni se escaneaba,
+       ni se registraban señales/features: operaciones de riesgo CERO.
+   (c) LO PEOR: _roll_day() es el UNICO sitio que levanta el kill-switch
+       automatico al cambiar el dia UTC, y solo se llama desde
+       _snapshot_and_guard(), que solo se llama AL FINAL de _cycle(). Con el
+       `return` al principio, ese codigo era INALCANZABLE mientras el
+       kill-switch estuviera puesto => EL AUTO-LEVANTADO NUNCA OCURRIA. El bot
+       quedaba muerto para siempre, que es justo lo que el fix del bug #3
+       pretendia evitar. La documentacion afirmaba "se auto-levanta al cambiar
+       el dia UTC"; el codigo no podia hacerlo.
+   Detectado en vivo: el kill-switch salto a las 16:01 UTC (equity 898.38 vs
+   1000.00 de apertura = -10.2%, el coste hundido del baseline; el run entero
+   cabia en un solo dia UTC, asi que "perdida del dia" = "perdida total").
+   Alguien lo desactivo a mano a las 16:03:07 y volvio a saltar 8 s despues.
+   Fix: el kill-switch corta el RIESGO NUEVO, no las salidas ni la medicion ni
+   el aprendizaje. Ahora con kill-switch se gestiona lo abierto, se mide equity,
+   se escanea y se registran señales/features; lo unico que no se hace es abrir
+   posiciones (el corte esta justo antes de risk.approve/open_positions).
+   Ademas la alerta solo salta en la TRANSICION vivo->cortado: corriendo el
+   guardia en cada ciclo, sin esa guarda escribiria una fila RISK por minuto.
+   Verificado en produccion: con el kill-switch activo el engine escanea
+   (500 -> 153 mercados) y abre 0 posiciones. 4 checks de regresion en el
+   selftest [8] fijan las dos garantias.
+8. EL DASHBOARD SE QUEDABA EN 502 EN CADA DEPLOY (2026-07-16). nginx tenía el
+   hostname literal en proxy_pass ("http://api:8000"), así que resolvía "api"
+   UNA vez al arrancar y cacheaba la IP PARA SIEMPRE. Al recrearse el contenedor
+   api (deploy, crash, reinicio) cambiaba de IP y nginx seguía hablando con la
+   muerta. Medido: api en 172.18.0.5, DNS de Docker resolviendo .5
+   correctamente, `wget http://api:8000/health` funcionando DESDE el contenedor
+   nginx... y el log de nginx insistiendo en "connect() failed (111) ...
+   upstream: http://172.18.0.4:8000". La página cargaba (200) pero TODAS sus
+   llamadas a /api y el WebSocket daban 502: parecía "el bot no responde".
+   Fix: `resolver 127.0.0.11` + VARIABLE en proxy_pass (hacen falta LAS DOS: con
+   variable nginx resuelve en cada petición en vez de al arrancar). Como usar
+   variable desactiva la sustitución automática del prefijo del location, la
+   ruta se reconstruye con regex + captura ($1$is_args$args).
+   Verificado a lo bruto: se forzó a la api a cambiar de IP (.5 -> .7) con un
+   contenedor señuelo ocupando la vieja, y el dashboard siguió a 200 sin
+   reiniciar nginx.
+9. NameError LATENTE = CRASH LOOP EN PRODUCCIÓN (2026-07-16). strategy_performance
+   usaba get_settings() sin importarlo en repositories.py. El selftest lo daba
+   por bueno porque solo miraba el TEXTO de la función (inspect.getsource) y
+   nunca la ejecutaba; el engine SÍ la llama en startup() -> NameError ->
+   crash loop. Fix: el import, y un check que recorre el bytecode buscando
+   LOAD_GLOBAL sin resolver en los repos (probado: con el bug lo caza, con el
+   fix pasa). Lección: un test que LEE código no sustituye a uno que lo EJECUTA.
+10. DESPLIEGUE EN LXC: buildx de Debian demasiado viejo -> Docker CE oficial;
+   bind mounts con dueño root vs contenedor uid 999 -> chown automatizado en
+   deploy.sh; healthcheck con "localhost" resolvía a ::1 (IPv6) con servicios
+   solo-IPv4 -> 127.0.0.1.
+
+
+--------------------------------------------------------------------------------
+7. HISTORIA DEL PROYECTO (resumen cronológico)
+--------------------------------------------------------------------------------
+2026-07-15 14:48  Diseño de arquitectura completa (9 entregables). Stack, DB,
+                  contenedores, fases F0-F7, gate de validación 7-14 días.
+2026-07-15 15:33  Inspección del CT202 original: corría el bot Poly EN VIVO con
+                  wallet de fondos reales. Plan de limpieza con backup previo.
+                  (El usuario luego creó un CT nuevo y limpio, hostname medusa;
+                  el Poly con fondos ya no estaba: no hubo que borrar nada.)
+2026-07-15 15:33  F0: infraestructura Docker base (compose, Dockerfile multi-
+                  stage no-root, healthchecks, logs, .env, volúmenes, red).
+2026-07-15 17:35  F1-F6: pipeline completo (Scanner, Prediction placeholder,
+                  Risk, Trading, Paper real contra el libro, Live vía CLOB,
+                  Dashboard vanilla, Discord, gate de Live, selftest).
+2026-07-15 17:50  Despliegue en CT202. Bug de atomicidad encontrado y resuelto
+                  gracias a un reinicio; BD reseteada; 5 servicios healthy.
+2026-07-15 18:15  Endurecimiento para run desatendido: fix stop-loss/spread,
+                  fix kill-switch diario, poda de datos, filtro edge vs coste,
+                  logs limpios. Ventana de validación desde 2026-07-16 00:07 UTC.
+2026-07-15 20:58  (Otra sesión + esta) Reconciliación on-chain funcionando.
+                  Estudio de calibración: 3 bugs arreglados (dedup, Wilson,
+                  control [C]) y corrido con n=1856 -> POLYMARKET BIEN CALIBRADO,
+                  baseline sin edge -> neutralizado (reversion_k=0.0). Fixes de
+                  record_exit parcial y dust. Redeploy verificado: escaneos con
+                  0 oportunidades, ventana intacta, contabilidad exacta.
+2026-07-15 21:10  medusa.txt convertido de log append-only a documento vivo
+                  (esta reescritura), por indicación del usuario.
+2026-07-15 21:55  Sesión de mejora de ROI + dashboard (a petición del usuario):
+                  HALLAZGOS (preguntas del usuario):
+                  - "Balance 664 con -75 de PnL": NO es bug. Balance = efectivo
+                    libre; 664.69 + 284.98 (en posiciones) + 50.33 (pérdida
+                    realizada) = 1000.00 exactos. Equity 924.89 = 1000 - 75.11.
+                  - "Conf. 100% en todo": el placeholder de confianza
+                    (liquidez/volumen) satura a 1.0 en todos los mercados top
+                    que elige el scanner (mín liquidez $10k, mín vol $161k).
+                    No discrimina nada; se quitó del dashboard hasta que haya
+                    modelo real (las 829 oportunidades guardadas eran todas 1.0).
+                  CAMBIOS:
+                  - dashboard: scrollbars custom finos/oscuros (webkit +
+                    Firefox); tile "Balance (efectivo)"; tile nuevo "En
+                    posiciones"; tile nuevo "Mercados"; columna Conf. eliminada.
+                  - api/main.py: watchdog de caídas del servicio → Discord
+                    (cierra el hueco del Mensaje 8; ver sección 4).
+                  - portfolio/metrics.py: + markets_traded (campo "Mercados"
+                    del reporte del Mensaje 9 que faltaba).
+                  INVESTIGACIÓN DE ROI CON DATOS REALES:
+                  - Arb intra-mercado (arb_scan.py): 110 mercados, CERO
+                    oportunidades (mín ask_YES+ask_NO = $1.001). Ver sección 3.
+                  - Momentum (momentum_study.py): pase 1 NO concluyente (poca
+                    potencia); pase 2 (±0.005, n=568): SIN señal (z=+0.17).
+                    Ver sección 3: 3 vías de edge medidas, 3 muertas.
+                  AUDITORÍA vs las 9 instrucciones originales: con el watchdog
+                  y markets_traded, TODO lo pedido queda implementado. El ROI
+                  -7.5% no es un bug: es el coste ya hundido del baseline sin
+                  edge (neutralizado); las 6 posiciones restantes se liquidan
+                  solas y el PnL futuro esperado de mantenerlas es ~0 en un
+                  mercado calibrado.
+2026-07-16        EVOLUCIÓN A SISTEMA INTELIGENTE MULTI-ESTRATEGIA (instrucción
+                  del usuario; ver sección 4-bis completa). Módulos nuevos:
+                  intelligence/ (taxonomía + clasificador + pre-scorer),
+                  strategies/ (6 estrategias + StrategyManager, shadow-first),
+                  allocation/ (pesos por rendimiento medido, Wilson + límite
+                  inferior del ROI), tabla strategy_signals con resolver
+                  periódico, atribución de estrategia en opportunities/
+                  positions/trades, migración idempotente, 4 endpoints nuevos,
+                  fila "Inteligencia" en el dashboard, alerta Discord de
+                  arbitraje. PredictionEngine -> shim legacy (lógica en
+                  strategies/mean_reversion.py). Verificado local: 51 checks
+                  del selftest + dry-run real (500 mercados -> 167 escaneables
+                  -> 15 señales en 5.4s).
+2026-07-16 18:25  V3 FASE A: INTELLIGENCE LAYER (instrucción del usuario; ver
+                  sección 4-ter completa). Feature Store append-only + capa de
+                  inteligencia desacoplada (base/runner/microstructure) + ciclo
+                  de vida de 4 fases con el candado paper-no-toca-live + 3
+                  endpoints nuevos. Todo aditivo: nada existente se reescribió.
+                  HALLAZGO DE HARDWARE (decide el plan de ML): el AMD G-T56N no
+                  tiene SSE4.2/AVX -> numpy 2.x MUERE con Illegal instruction;
+                  numpy 1.26.4 y lightgbm 4.6.0 funcionan (con libgomp1 y
+                  numpy<2); catboost descartado. No se añadieron a la imagen:
+                  aún no hay modelo ni histórico.
+                  AUDITORÍA DE SINCRONIZACIÓN medusa.txt <-> Notion: 5 desfases
+                  corregidos, el peor la sección 4 de Notion, que aún describía
+                  el pipeline VIEJO (scanner->prediction->risk) como si el
+                  PredictionEngine siguiera vivo. Lección: la API de Notion
+                  devuelve ÉXITO aunque el old_str no haga match — un edit mío
+                  del deploy anterior había fallado en silencio. Verificar
+                  releyendo tras editar.
+2026-07-16 19:20  SESIÓN "¿POR QUÉ NO GANA DINERO?" (pregunta del usuario). La
+                  respuesta completa, con datos, en la sección 4-quater: no gana
+                  porque NO OPERA; y de los 8 trades que hizo el baseline, el
+                  80% de la pérdida fue PEAJE DE EJECUCIÓN, no predecir mal.
+                  HALLAZGO CLAVE — "con Hermes se veía que sí": Hermes y Medusa
+                  NO MIDEN LO MISMO. La propia doc de Hermes en Notion admite
+                  que solo trackea la cota `pnl_maker`, que ella misma etiqueta
+                  "optimista (techo)", y avisa: "sin esa cota pesimista, no hay
+                  forma de saber si el edge sobrevive a una ejecución realista".
+                  Los MISMOS 8 trades medidos a la manera de Hermes darían
+                  -18.41 en vez de -92.59: 5 veces mejor solo por el supuesto de
+                  fill (y aun así negativos).
+                  CONSTRUIDO: doble cota maker/taker en las señales (4-quinquies)
+                  + persistencia del contexto de coste + filtro de operabilidad
+                  en strategy_performance + columnas nuevas en el dashboard.
+                  4 BUGS ARREGLADOS (ver sección 6): #7 kill-switch permanente,
+                  #8 dashboard en 502 por DNS cacheado en nginx, #9 NameError
+                  latente que provocó un CRASH LOOP en producción (introducido
+                  por mí en esta misma sesión y detectado en el acto), y el
+                  dashboard mostrando "shadow" para una estrategia en fase paper.
+                  APRENDIDO (procedimiento): `docker compose exec engine python
+                  scripts/selftest.py` MATA AL ENGINE por OOM del cgroup; se usa
+                  `run --rm --no-deps`. Ver sección 2.
+2026-07-16 13:04  DEPLOY a CT202 del sistema multi-estrategia. Backup previo de
+                  la BD (backups/medusa-backup-20260716-130137). Migración de
+                  columnas aplicada sola; selftest completo OK dentro del
+                  contenedor; los 5 contenedores healthy. Ver sección 4-bis
+                  ("Verificación en producción").
+                  DOS HALLAZGOS DE LA SESIÓN:
+                  (a) El engine llevaba 9 h PARADO: SIGTERM a las 04:02:49 UTC
+                      (Exited(0), apagado limpio) y restart:unless-stopped no
+                      revive lo que se paró a propósito. Lo revivió el deploy.
+                  (b) WATCHDOG VERIFICADO CON UNA CAÍDA REAL: 18 alertas a
+                      Discord, una cada 30 min exactos, heartbeat_age creciente,
+                      cero fallos de envío. Deja de ser la única afirmación no
+                      verificada del documento (ver sección 4).
+
+
+--------------------------------------------------------------------------------
+8. PRÓXIMOS PASOS
+--------------------------------------------------------------------------------
+1. DEJAR CORRER Y ACUMULAR SEÑALES EN SHADOW. Es EL paso: sin señales resueltas
+   no hay nada que decidir. Revisar /strategies y /signals; con ~30+ señales
+   resueltas por celda (estrategia x categoría) el asignador empieza a tener
+   voz. NO habilitar STRATEGY_PHASES=...:paper antes de eso, y solo para la
+   celda concreta que demuestre ROI TAKER con límite inferior > 0.
+   Las señales actuales son sobre todo tenis y críquet, que resuelven en DÍAS;
+   los mercados largos (Mundial 2026) tardarán meses.
+   LO PRIMERO QUE HAY QUE MIRAR cuando lleguen: la columna "Peaje spread" del
+   dashboard. Si el ROI techo (maker) es bonito y el real (taker) es negativo,
+   esa estrategia NO tiene negocio -- es exactamente la trampa en la que cae
+   Hermes. Ver 4-quater y 4-quinquies.
+2. Vigilar que el engine SIGA VIVO (acaba de estar 9 h parado sin que nadie lo
+   notara salvo el watchdog). El dashboard lo canta y Discord avisa.
+3. V3 FASE B — WALLET INTELLIGENCE (el siguiente módulo del layer). Reputación
+   de wallets vía Data API de Polymarket: sin claves, sin coste, y es
+   información EXTERNA AL PRECIO que ya tenemos delante — justo la dirección
+   que los 3 estudios señalan como la única viva. NO es copy trading: produce
+   wallet_score como feature. Diseñar el muestreo ANTES de implementar: es
+   caro en llamadas y el runtime no puede bloquearse esperando.
+4. V3 FASE C — Cross Market Engine (relaciones entre mercados; nativo de
+   Polymarket, sin dependencias externas).
+5. V3 FASE D — News/Event Intelligence. BLOQUEADO por decisión de fuente: el
+   usuario eligió empezar solo con Polymarket. La interfaz está lista; falta
+   decidir la fuente (RSS público vs API con clave). LLM SOLO offline para
+   convertir texto en variables; jamás en el camino de decisión.
+6. V3 FASE E — ML + Model Registry + backtesting/walk-forward. VA AL FINAL a
+   propósito: hoy el Feature Store está vacío. Entrenar sin histórico es
+   construir un modelo sobre una tabla vacía. Cuando haya meses de features:
+   entrenar FUERA de la caja con LightGBM, versionar (crypto_v1, sports_v1...)
+   sin reemplazar nunca el anterior automáticamente, y cargar en el runtime
+   con numpy<2 + libgomp1 (o inferencia en Python puro). Ver 4-ter.
+7. Antes de cualquier Live: probar el camino CLOB real con importe mínimo y
+   revisar los fills.
+================================================================================
+
+
+================================================================================
+9. MICRO-TRADER "UP OR DOWN" 5 MIN (medusa.updown)  — 2026-07-17
+================================================================================
+Instrucción del usuario: implementar el "5 min up/down" de BNB de Polymarket,
+que tenga buen winrate, usando algo que dé seguridad en la decisión (arbitraje/
+copy/…). Resultado: subsistema NUEVO y DESACOPLADO, en su propio paquete y su
+propio loop, apagado por defecto en código (UPDOWN_ENABLED). SOLO PAPER: sin
+camino a Live por diseño.
+
+POR QUÉ NO CABE EN EL PIPELINE NORMAL
+  El scanner filtra por horas-a-resolución (>=6h) y rankea por volumen: una
+  ventana de 5 min ni aparece. El ciclo de trading corre cada 60s: demasiado
+  lento para un mercado que vive 300s y donde la decisión se toma en los últimos
+  segundos. Y el edge NO está en el libro de Polymarket, sino en un feed EXTERNO
+  y más rápido. Por eso es un loop aparte (como el Intelligence Layer), no una
+  Strategy más.
+
+HALLAZGOS EN VIVO (verificados contra la API real el 2026-07-17)
+  - Los mercados existen con slug DETERMINISTA: bnb-updown-5m-<epoch_inicio>,
+    epoch alineado a 300s. La ventana viva se CALCULA (now//300*300), no se
+    busca: una sola llamada a Gamma por ventana.
+  - Resuelve "Up" si precio_final >= precio_inicial. Fuente oficial: stream
+    Chainlink BNB/USD (NO spot). Al resolver, outcomePrices -> ["1","0"] (Up) o
+    ["0","1"] (Down).
+  - El libro CLOB es MUY ancho (visto Up 0.25/0.33, 0.52/0.63): el peaje de
+    ejecución domina, como ya enseñó todo el proyecto. Un taker paga ~0.63 por
+    algo que vale ~0.50.
+  - BNB de baja vol: 1σ en 300s = 0.059%, en 60s = 0.026%. Sin un movimiento
+    DECISIVO el resultado es cara-o-cruz.
+
+EL EDGE (qué lo hace "seguro")
+  Arbitraje informativo/de latencia: el spot de BNB (Binance) es un proxy casi
+  perfecto de la dirección del stream Chainlink que resuelve el mercado, pero se
+  actualiza cada segundo. Modelo de barrera de difusión sin deriva:
+      P(Up) = Phi( ln(S_t/S0) / (sigma_sec * sqrt(secs_left)) )
+  S0 = open EXACTO del minuto en el borde de la ventana (klines de Binance);
+  sigma_sec = vol realizada de los últimos 60 klines de 1m. A medida que
+  secs_left->0 con el movimiento a favor, P->1: la incertidumbre se agota y el
+  resultado se fija. CDF normal con math.erf (stdlib): NADA de numpy/scipy (el
+  CPU del CT202 no tiene SSE4.2 y numpy 2.x aborta con Illegal instruction).
+
+LOS DOS CANDADOS (la lección de Hermes, aplicada)
+  1) CERTEZA (winrate): solo se apuesta si la P del lado favorecido supera
+     UPDOWN_MIN_PROB (0.90) y estamos en los últimos UPDOWN_ENTRY_WINDOW_SECS
+     (90s) — cuando el movimiento ya se decantó (varios sigma).
+  2) EV tras el peaje (anti-Hermes): además el ask REAL debe dejar
+     EV = P - ask >= UPDOWN_MIN_EV (0.02) y no superar UPDOWN_MAX_ASK (0.95). Un
+     resultado casi seguro que YA cotiza a 0.99 NO es negocio: el techo es 1% y
+     el spread se lo come. Este candado es justo lo que separa "se veía rentable"
+     de "gana dinero" — el error de medir solo la cota optimista.
+  El fill se SIMULA contra el libro real con el motor Paper (spread, slippage,
+  fills parciales, rechazo por tamaño mínimo). Se liquida contra la resolución
+  REAL del mercado (autoritativa); si Polymarket tarda > UPDOWN_SETTLE_TIMEOUT,
+  respaldo por el cierre de Binance; tras UPDOWN_VOID_AFTER sin nada, void.
+
+ARCHIVOS
+  NUEVOS  medusa/updown/{__init__,model,feed,market,trader}.py
+  TABLA   updown_trades (aislada de positions/trades: estas apuestas se mantienen
+          a resolución, sin TP/SL, y no deben contaminar el portfolio principal).
+          Guarda la P justa al entrar (auditar winrate esperado vs real) y el
+          exec_cost pagado (el peaje).
+  REPOS   has_open_updown, save_updown_trade, open_updown_trades,
+          settle_updown_trade, void_updown_trade, updown_stats, list_updown_trades
+  CONFIG  UPDOWN_* (config.py + .env.example)
+  ENGINE  _updown_loop() independiente en el asyncio.gather; cierre en shutdown
+  API     GET /updown (winrate, PnL, política, apuestas recientes)
+  DISCORD updown_entry / updown_settle
+  SELFTEST sección [9]: modelo (límites y monotonía), los dos candados, esquema y
+          resolución de globales de los repos (el check de bytecode que ya cazó
+          un crash-loop en prod). Todo puro, sin red ni BD.
+
+VERIFICACIÓN LOCAL (2026-07-17)
+  - AST + import de los 12 archivos: OK.
+  - Checks puros del modelo: OK. Selftest [1..9] sin fallos (las secciones que no
+    piden Postgres); [9] con 15 checks verde.
+  - Round-trip ORM de updown_trades en SQLite (create_all + insert/select/settle): OK.
+  - Dry-run en vivo del camino completo (ventana -> S0 -> spot -> sigma -> libro
+    -> assess) contra la API real: descubre la ventana, decide y explica el
+    motivo (rechaza fuera de los 90s). OK.
+  - Integración con BD mockeada contra el mercado real: entrada (fill simulado
+    sobre libro real: compró Up 28.5 sh por $20) + liquidación forzada Up=1.0
+    (payout $28.5, PnL +$8.5, ROI +42.5%): la aritmética cuadra. OK.
+
+REALISMO (dicho sin adornos)
+  El winrate alto es alcanzable con el candado de certeza; la RENTABILIDAD NETA
+  no está demostrada y el enemigo es el spread ancho de estos libros. Estos
+  mercados están dominados por bots que ven lo mismo, así que los resultados casi
+  seguros suelen cotizar ya a 0.95-0.99 (poco margen) y llenar cerca del cierre
+  es competitivo. Por eso: PAPER primero, medir winrate REAL y exec_cost en
+  /updown, y solo entonces decidir. Es el mismo principio shadow-first del resto
+  del proyecto.
+
+PENDIENTE
+  - Encender en el .env de CT202 (UPDOWN_ENABLED=true + bloque UPDOWN_*), rebuild
+    y up. La tabla la crea init_db() sola (create_all; no necesita migración).
+  - Dejar correr y mirar /updown: winrate, ROI y "exec_cost_paid". Si el winrate
+    es alto pero el ROI negativo, es el peaje — subir UPDOWN_MIN_EV o no operar.
+================================================================================
+
+2026-07-17 (add.)  DASHBOARD: panel propio "Up/Down 5 min · micro-trader (paper)"
+                   (dashboard/html/index.html). Antes las apuestas solo se veían en
+                   Discord y en el terminal de logs; ahora hay un panel que consume
+                   GET /api/updown y muestra, por apuesta: hora, activo, lado,
+                   entrada, P(justa), EV y el RESULTADO (ganada/perdida en verde/
+                   rojo, o abierta) con PnL y ROI. Cabecera con resumen: nº
+                   resueltas, winrate, PnL, abiertas y PEAJE pagado (exec_cost) —
+                   las tres cifras que dicen si el winrate sobrevive a la ejecución.
+                   Refresca en el tick de 5s. Verificado: JS válido (node --check) +
+                   render con datos mock (winrate/tabla correctos). Deploy: solo el
+                   contenedor dashboard (docker compose up -d --build dashboard); no
+                   toca el engine ni sus apuestas en curso.
+
+2026-07-17 (v2)   UP/DOWN INTEGRADO AL PORTFOLIO + CONTROLES DE CUENTA + TOGGLES
+                  (instrucción del usuario: no un panel aparte, sino que los
+                  trades vivan en el flujo real y pueda controlar la cuenta).
+  CAMBIO DE DISEÑO: el micro-trader ya NO usa tabla aislada (updown_trades
+    eliminada). Ahora ESCRIBE EN EL LEDGER REAL de paper:
+      - Entrada: record_entry(mode=paper, strategy="updown_<activo>",
+        outcome="Up"/"Down") => posición + balance. Aparece en "Operativa ·
+        Activas", cuenta en balance/equity/exposición/mercados. Además guarda
+        una Opportunity (se ve en el panel de oportunidades, con P mercado vs P
+        Medusa y edge=EV).
+      - Liquidación: la hace el Trading Engine (manage_positions) en la
+        resolución, igual que cualquier posición => pasa a "Historial" y suma a
+        winrate/PnL/ROI/nº cerradas. GUARDA nueva en _manage_one: las posiciones
+        cuya strategy empieza por "updown" NO reciben TP/SL ni cierre por
+        proximidad (se mantienen a resolución; su outcome "Up" liquida como el
+        "YES"). El settle notifica por el trade_exit normal (✅/❌).
+    Resultado: TODAS las métricas de arriba (balance, equity, PnL, ROI, winrate,
+    abiertas, cerradas, drawdown, mercados) ya incluyen los Up/Down solos, sin
+    código de métricas nuevo. Se quitó el panel "Up/Down 5 min" separado.
+  CONTROL DE CUENTA (dashboard + API):
+      POST /paper/balance {balance}     -> ajusta balance + referencia del ROI.
+      POST /paper/reset {starting_balance, confirm:"RESET"} -> WIPE: borra
+        posiciones/trades/oportunidades/órdenes/fills/equity de paper, resetea
+        balance y paper_start_at (reloj de validación), limpia kill-switch. NO
+        toca el gate 14d/30ops/ROI>0 ni el desbloqueo de Live: el gate vuelve a
+        contar desde cero. NO borra señales shadow (aprendizaje).
+  TOGGLE POR MERCADO (dashboard + API): columna bot_state.updown_assets (CSV,
+    NULL=usar UPDOWN_ASSETS del .env; ""=todos apagados a mano). GET/POST
+    /updown/assets. El engine relee los activos cada ~15s => encender/apagar
+    bnb/btc/eth/sol/xrp surte efecto en segundos, sin redeploy. Feeds perezosos
+    por activo. El trader respeta el kill-switch (no abre con kill puesto).
+  VERIFICADO local: AST+imports; selftest [1..9] verde (nuevos checks: guarda
+    updown en manage_positions, globales de repos nuevos); ORM sqlite (bot_state
+    tiene updown_assets, sin updown_trades); round-trip async (aiosqlite) de
+    get/set_updown_assets [NULL->default, ''->off], has_open_updown_bet,
+    set_paper_balance, wipe_paper (borra 1/1/1/1, resetea balance y clock);
+    integración contra mercado REAL: entrada por record_entry (paper, updown_bnb,
+    balance -$20, Opportunity guardada) + settle por manage_positions (resuelto
+    Up paga 25.0; mercado vivo NO vende). Dashboard: JS válido (node), IDs
+    consistentes, render de toggles OK. DEPLOY: rebuild de engine+api Y dashboard
+    (docker compose up -d --build); la migración de bot_state.updown_assets la
+    aplica init_db sola. La tabla vieja updown_trades queda huérfana (inofensiva).
+
+2026-07-18 HOTFIX  CRASH-LOOP tras el deploy v2 + settle "retrasado". Causa raiz
+                   del crash: al reescribir el trader en v2 se ELIMINO el atributo
+                   UpDownTrader.assets (paso a ser el metodo async active_assets()),
+                   pero engine._updown_loop TODAVIA hacia `self.updown.assets` ->
+                   AttributeError al arrancar el loop -> asyncio.gather propaga ->
+                   el proceso sale -> restart:unless-stopped lo reinicia -> crash
+                   loop de arranque. NO lo cazaron las pruebas locales porque
+                   ejercitaban trader.tick() directo, nunca _updown_loop. Leccion:
+                   probar SIEMPRE el arranque real de los loops, no solo las piezas.
+  FIXES:
+   1) engine._updown_loop: usa active_assets() y el log de arranque va envuelto en
+      try/except (una lectura de BD no puede tumbar el loop).
+   2) BLINDAJE GENERAL: run() ahora envuelve cada loop en Engine._guarded(): si un
+      loop revienta, se registra a lo grande + alerta Discord, pero los DEMAS
+      siguen vivos y el proceso NO se reinicia. Esta clase de bug (excepcion no
+      capturada en cualquier loop -> crash loop) ya no puede volver a tumbar el
+      engine entero. El watchdog de la API avisa si el que muere es el heartbeat.
+   3) SETTLE "retrasado": en v2 la liquidacion la hacia manage_positions (ciclo de
+      60s), asi que un trade resuelto tardaba hasta 60s en pasar a Historial. Ahora
+      el loop de Up/Down (5s) es el UNICO settler (_settle_open/_settle_one): en
+      cuanto Polymarket publica la resolucion, el trade pasa a Historial en ~5s.
+      manage_positions IGNORA por completo las posiciones updown (early return) ->
+      no hay doble liquidacion concurrente ni carrera de balance. (Queda la latencia
+      inherente de Gamma en marcar el mercado closed, fuera de nuestro control.)
+  VERIFICADO: se ejecuta _updown_loop de verdad (arranca sin AttributeError);
+   _guarded traga una excepcion simulada (el engine sobrevive); trader sin .assets
+   con active_assets(); fast-settle contra mercado resuelto (Down->1.0, cierra y
+   notifica). Selftest [1..9] verde con checks actualizados.
+
+2026-07-18 HOTFIX2 PnL/ROI congelados: las entradas se registraban pero las
+                   posiciones NUNCA se liquidaban. Causa: fetch_market_by_condition
+                   usa /markets?condition_ids= y Gamma EXCLUYE los mercados cerrados
+                   por defecto -> para un mercado resuelto devolvia 0 filas -> None
+                   -> el settler creia que seguia abierto para siempre. Verificado
+                   en vivo: resuelto default->0 filas, closed=true->1; abierto
+                   default->1, closed=true->0. FIX: fetch_market_by_condition prueba
+                   default y, si vacio, reintenta con closed=true (cubre vivo y
+                   resuelto). Es un bug GENERAL (tambien afectaba la resolucion de
+                   señales shadow y la liquidacion de cualquier posicion). Verificado
+                   end-to-end contra la resolucion REAL: Up y Down liquidan a 1/0
+                   correctamente. Tras el deploy, las posiciones ya atascadas se
+                   liquidan solas en ~5s (el settler corre cada tick).
+
+2026-07-18 RISK    RISK MANAGER del micro-trader Up/Down (medusa/updown/risk.py).
+                   Los dos candados del modelo deciden SI hay edge; el risk
+                   manager decide CUANTO arriesgar y CUANDO parar. Controles
+                   (config UPDOWN_*, todos activos por defecto salvo el %-sizing):
+                     - Sizing por bankroll: apuesta = fraccion del balance acotada
+                       a [MIN,MAX] (STAKE_FRACTION=0 => fijo UPDOWN_STAKE_USD).
+                     - MIN_BALANCE: suelo de caja.
+                     - MAX_OPEN: apuestas abiertas a la vez.
+                     - MAX_EXPOSURE_PCT: % del balance en riesgo simultaneo (el
+                       sizing se recorta al presupuesto restante).
+                     - MAX_DAILY_LOSS_PCT: stop del dia (PnL updown hoy vs balance
+                       de apertura), ademas del kill-switch de cuenta.
+                     - MAX_DAILY_BETS: tope de actividad diaria.
+                     - MAX_CONSECUTIVE_LOSSES + COOLDOWN_SECS: pausa anti-racha.
+                   UpDownRiskManager.assess(snap, now) es PURO. repo.updown_risk_data()
+                   arma la foto. El trader lo consulta SOLO cuando el modelo ya quiere
+                   apostar; si bloquea, log RISK al dashboard y una decision por
+                   ventana. Estado en GET /updown/assets (risk + risk_limits) y en el
+                   panel "Mercados Up/Down". VERIFICADO: selftest (11 checks),
+                   round-trip async de updown_risk_data, integracion en el trader,
+                   render del panel. DEPLOY: engine+api+dashboard.
+
+2026-07-20 BUG#1   TECHO max_ask SE PODIA SALTAR POR EL FILL REAL. El candado
+                   max_ask se evaluaba en assess() contra book.best_ask (mejor
+                   nivel en el instante de la decision), pero el fill real del
+                   motor Paper camina niveles mas caros si el libro esta fino
+                   cerca de la certeza (justo donde mas importa el techo) y suma
+                   el slippage. Medido: 7 de 26 apuestas reales (27%) se llenaron
+                   por encima de UPDOWN_MAX_ASK (0.95), hasta 0.974. FIX
+                   (updown/trader.py._open): tras simular el fill se comprueba el
+                   precio MEDIO REAL contra max_ask y se rechaza antes de tocar
+                   el ledger. Desplegado y verificado en CT202.
+
+2026-07-23 BUG#2   EL EV SE LO COME EL FILL REAL (misma familia que BUG#1, la
+                   causa de "no pasa a positivo"; profit factor medido 0.591).
+                   El candado min_ev de assess() mide EV = fair_prob - book.
+                   best_ask (mejor nivel NOMINAL), pero el fill real paga un
+                   avg_price MAYOR al caminar el libro (+slippage). El fix del
+                   max_ask (07-20) solo rechaza si el avg supera 0.95 (techo
+                   absoluto); NO detecta un edge comido por debajo de ese techo.
+                   Demostrado con el motor real: una apuesta que el gate ve a EV
+                   +0.027 se llena a EV real +0.016 (42% del borde evaporado) sin
+                   disparar el techo; en libros mas finos el EV real es negativo.
+                   Con min_ev de solo 0.02 ese goteo convierte un edge fino
+                   positivo en ~cero/negativo realizado. FIX (updown/trader.py.
+                   _open): tras simular el fill se revalida EV_real = fair_prob -
+                   avg_price contra UPDOWN_MIN_EV; si el fill se comio el margen
+                   se registra updown.ev_eaten_by_fill y NO se abre (ventana
+                   marcada como decidida). DEPLOY 2026-07-23: deploy.sh reconstruyo
+                   engine+api (backup trader.py.bak-20260723), ambos healthy,
+                   engine arranco limpio (engine.started, updown.enabled bnb+sol,
+                   sin traceback), fix confirmado dentro del contenedor. SIGUE
+                   ABIERTO (estrategia, no codigo): sobreconfianza del modelo
+                   (colas gordas / basis risk Binance<->Chainlink) y min_prob=0.90
+                   (cola del 10% de perder el 100% del stake). Revisar con ~100
+                   apuestas.

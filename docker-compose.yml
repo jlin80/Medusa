@@ -1,0 +1,153 @@
+name: medusa
+
+# ---------------------------------------------------------------------------
+# Medusa - Infraestructura Docker base (F0)
+# Objetivo: "docker compose up -d" deja el stack corriendo 24/7.
+# NO contiene logica de trading todavia (solo infra + esqueleto).
+# Ajustado para hardware limitado (2 vCPU / 3 GB RAM) con mem_limit por servicio.
+# ---------------------------------------------------------------------------
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  # ------------------------------------------------------------------ Postgres
+  postgres:
+    image: postgres:16-alpine
+    container_name: medusa-postgres
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      POSTGRES_USER: ${DB_USER:-medusa}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Define DB_PASSWORD en .env}
+      POSTGRES_DB: ${DB_NAME:-medusa}
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c max_connections=50
+      -c effective_cache_size=512MB
+      -c work_mem=8MB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [medusa-net]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-medusa} -d ${DB_NAME:-medusa}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *default-logging
+
+  # --------------------------------------------------------------------- Redis
+  redis:
+    image: redis:7-alpine
+    container_name: medusa-redis
+    restart: unless-stopped
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--maxmemory"
+      - "128mb"
+      - "--maxmemory-policy"
+      - "noeviction"
+    volumes:
+      - redisdata:/data
+    networks: [medusa-net]
+    mem_limit: 192m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+
+  # -------------------------------------------------------------------- Engine
+  engine:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.core
+    image: medusa-core:latest
+    container_name: medusa-engine
+    restart: unless-stopped
+    env_file: [.env]
+    command: ["python", "-m", "medusa"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    volumes:
+      - ./logs:/app/logs
+      - ./secrets:/app/secrets:ro   # keystore/wallet (solo LIVE, montado read-only)
+    networks: [medusa-net]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/healthcheck_engine.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+
+  # ----------------------------------------------------------------------- API
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.core
+    image: medusa-core:latest
+    container_name: medusa-api
+    restart: unless-stopped
+    env_file: [.env]
+    command: ["uvicorn", "medusa.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    volumes:
+      - ./logs:/app/logs
+    networks: [medusa-net]
+    mem_limit: 384m
+    healthcheck:
+      # 127.0.0.1 y no "localhost": localhost resuelve primero a ::1 y los
+      # servicios escuchan solo en IPv4, lo que da "connection refused".
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=5).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *default-logging
+
+  # ----------------------------------------------------------------- Dashboard
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    image: medusa-dashboard:latest
+    container_name: medusa-dashboard
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_started}
+    ports:
+      - "${DASHBOARD_PORT:-8080}:80"   # UNICO puerto expuesto a la LAN
+    networks: [medusa-net]
+    mem_limit: 64m
+    healthcheck:
+      # Ver nota del healthcheck de api: nginx escucha solo en IPv4.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging
+
+volumes:
+  pgdata:
+    name: medusa_pgdata
+  redisdata:
+    name: medusa_redisdata
+
+networks:
+  medusa-net:
+    name: medusa-net
+    driver: bridge

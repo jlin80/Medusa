@@ -1,0 +1,51 @@
+# syntax=docker/dockerfile:1
+# ---------------------------------------------------------------------------
+# Imagen base compartida por los servicios "engine" y "api".
+# Multi-stage: dependencias en una capa cacheable + runtime slim y no-root.
+# ---------------------------------------------------------------------------
+
+# ----------------------------------------------------------------- builder ---
+FROM python:3.12-slim AS builder
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# Toolchain solo para compilar wheels (asyncpg, etc.)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# ----------------------------------------------------------------- runtime ---
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+# Usuario no-root
+RUN groupadd -r medusa && useradd -r -g medusa -d /app -s /usr/sbin/nologin medusa
+
+WORKDIR /app
+
+# Dependencias ya instaladas
+COPY --from=builder /opt/venv /opt/venv
+
+# Codigo de la aplicacion
+COPY . .
+
+# Directorios de datos montables + permisos
+RUN mkdir -p /app/logs /app/secrets \
+    && chown -R medusa:medusa /app
+
+USER medusa
+
+ENTRYPOINT ["sh", "/app/docker/entrypoint.sh"]
+CMD ["python", "-m", "medusa"]

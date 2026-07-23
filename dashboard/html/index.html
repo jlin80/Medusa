@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Medusa · Polymarket Trading Bot</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#121820; --panel-2:#171f2a; --line:#243040;
+      --txt:#e6edf3; --muted:#8b9bb0; --accent:#2ec4b6; --accent-2:#3498db;
+      --green:#2ecc71; --red:#e74c3c; --orange:#e67e22; --purple:#9b59b6;
+      --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--txt);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:16px}
+    a{color:var(--accent)}
+    .wrap{max-width:1500px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+
+    /* ---------- topbar ---------- */
+    .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+      background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+    .brand{font-size:19px;font-weight:700;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+    .brand small{color:var(--muted);font-weight:400;font-size:12px;letter-spacing:0}
+    .spacer{flex:1}
+    .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px}
+    .dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+    .dot.off{background:var(--red);box-shadow:0 0 8px var(--red)}
+    .chip{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
+      padding:5px 12px;font-size:12px;color:var(--muted);white-space:nowrap}
+    .chip b{color:var(--txt)}
+
+    /* ---------- toggle ---------- */
+    .modebox{display:flex;align-items:center;gap:10px;background:var(--panel-2);
+      border:1px solid var(--line);border-radius:999px;padding:5px 12px}
+    .modelbl{font-size:12px;font-weight:700;letter-spacing:.4px}
+    .modelbl.paper{color:var(--accent)}
+    .modelbl.live{color:var(--orange)}
+    .switch{position:relative;width:46px;height:24px;flex:none}
+    .switch input{opacity:0;width:0;height:0}
+    .slider{position:absolute;inset:0;background:#2b3646;border-radius:999px;
+      cursor:pointer;transition:.2s}
+    .slider:before{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;
+      background:var(--txt);border-radius:50%;transition:.2s}
+    input:checked + .slider{background:var(--orange)}
+    input:checked + .slider:before{transform:translateX(22px)}
+    input:disabled + .slider{opacity:.45;cursor:not-allowed}
+
+    button{background:var(--panel-2);color:var(--txt);border:1px solid var(--line);
+      border-radius:8px;padding:7px 13px;cursor:pointer;font-size:13px;transition:.15s}
+    button:hover{border-color:var(--accent)}
+    button.danger{border-color:#5b2b2b;color:#ff9c9c}
+    button.danger:hover{background:#2a1616;border-color:var(--red)}
+    button.warn{border-color:#5b452b;color:#ffce9c}
+    button:disabled{opacity:.4;cursor:not-allowed}
+
+    input[type=number],input[type=text].inp{background:var(--bg);color:var(--txt);
+      border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;
+      font-family:var(--mono);width:140px}
+    input[type=number]:focus{outline:none;border-color:var(--accent)}
+    .togglerow{display:flex;align-items:center;gap:10px;padding:7px 2px;border-bottom:1px solid #1b2430}
+    .togglerow:last-child{border-bottom:none}
+    .togglerow .nm{flex:1;font-weight:600;letter-spacing:.3px}
+    .togglerow .st{font-size:11px;color:var(--muted);width:60px;text-align:right}
+    .hint{color:#8b9bb0;font-size:11.5px;margin-top:9px;line-height:1.5}
+
+    /* ---------- metric cards ---------- */
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+    .card .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+    .card .v{font-size:21px;font-weight:700;margin-top:4px;font-family:var(--mono)}
+    .pos{color:var(--green)} .neg{color:var(--red)} .neu{color:var(--txt)}
+
+    /* ---------- scrollbars (Chrome/Edge via webkit; Firefox via scrollbar-*) ---------- */
+    *{scrollbar-width:thin;scrollbar-color:#2b3646 transparent}
+    ::-webkit-scrollbar{width:9px;height:9px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#2b3646;border-radius:999px;
+      border:2px solid transparent;background-clip:padding-box}
+    ::-webkit-scrollbar-thumb:hover{background:#3d4f66;border:2px solid transparent;
+      background-clip:padding-box}
+    ::-webkit-scrollbar-corner{background:transparent}
+
+    /* ---------- layout ---------- */
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    @media(max-width:1100px){.grid{grid-template-columns:1fr}}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+      display:flex;flex-direction:column}
+    .phead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);
+      background:var(--panel-2);flex-wrap:wrap}
+    .phead h2{font-size:13px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--muted)}
+    .pbody{padding:12px 14px;overflow:auto;max-height:340px}
+
+    table{width:100%;border-collapse:collapse;font-size:12.5px}
+    th{text-align:left;color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;
+      padding:6px 8px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+    td{padding:6px 8px;border-bottom:1px solid #1b2430;font-family:var(--mono);font-size:12px}
+    tr:last-child td{border-bottom:none}
+    .q{font-family:inherit;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .empty{color:var(--muted);text-align:center;padding:24px;font-size:13px}
+
+    .tabs{display:flex;gap:6px}
+    .tab{font-size:12px;padding:4px 10px;border-radius:6px;cursor:pointer;color:var(--muted);
+      border:1px solid transparent}
+    .tab.active{background:var(--bg);color:var(--txt);border-color:var(--line)}
+
+    /* ---------- logs ---------- */
+    .term{background:#080b0f;font-family:var(--mono);font-size:12px;padding:10px 12px;
+      height:340px;overflow-y:auto}
+    .line{display:flex;gap:8px;padding:1.5px 0;white-space:pre-wrap;word-break:break-word}
+    .line .t{color:#4a5a6e;flex:none}
+    .line .l{flex:none;font-weight:700;width:62px}
+    .INFO .l{color:var(--accent-2)} .WARNING .l{color:var(--orange)}
+    .ERROR .l{color:var(--red)} .TRADE .l{color:var(--green)}
+    .RISK .l{color:var(--purple)} .SYSTEM .l{color:var(--muted)}
+    .filters{display:flex;gap:4px;flex-wrap:wrap}
+    .f{font-size:10.5px;padding:2px 7px;border-radius:999px;cursor:pointer;border:1px solid var(--line);
+      color:var(--muted);user-select:none}
+    .f.on{background:var(--panel-2);color:var(--txt);border-color:var(--accent)}
+
+    /* ---------- validation ---------- */
+    .checks{display:flex;flex-direction:column;gap:7px}
+    .check{display:flex;align-items:center;gap:9px;font-size:12.5px}
+    .check .ico{width:16px;flex:none;text-align:center}
+    .check .nm{flex:1;color:var(--muted)}
+    .check .vl{font-family:var(--mono);font-size:12px}
+    .bar{height:5px;background:#1b2430;border-radius:999px;overflow:hidden;margin-top:9px}
+    .bar>div{height:100%;background:var(--accent);transition:width .4s}
+
+    .banner{border-radius:8px;padding:9px 12px;font-size:12.5px;margin-bottom:11px;line-height:1.45}
+    .banner.lock{background:#12211f;border:1px solid #1e4d46;color:#8fe3d8}
+    .banner.warn{background:#241a10;border:1px solid #5b452b;color:#ffce9c}
+    .banner.err{background:#241414;border:1px solid #5b2b2b;color:#ff9c9c}
+    .foot{color:#4a5a6e;font-size:11px;text-align:center;padding:4px 0 10px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ================= TOPBAR ================= -->
+  <div class="topbar">
+    <div class="brand">🐍 MEDUSA <small>Polymarket Trading Bot</small></div>
+    <span class="chip"><span id="engdot" class="dot off"></span><span id="engtxt">conectando…</span></span>
+    <span class="chip">Ciclo <b id="hb">—</b></span>
+    <div class="spacer"></div>
+    <div class="modebox">
+      <span class="modelbl paper">PAPER</span>
+      <label class="switch">
+        <input type="checkbox" id="modesw" disabled />
+        <span class="slider"></span>
+      </label>
+      <span class="modelbl live">LIVE</span>
+    </div>
+    <button id="killbtn" class="danger">Kill-switch</button>
+  </div>
+
+  <div id="alert"></div>
+
+  <!-- ================= METRICS ================= -->
+  <div class="cards" id="cards"></div>
+
+  <!-- ============ CONTROL · cuenta paper + mercados Up/Down ============ -->
+  <div class="grid">
+    <div class="panel">
+      <div class="phead"><h2>Cuenta paper</h2></div>
+      <div class="pbody" style="max-height:none">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input id="balinput" type="number" step="0.01" min="0" placeholder="Balance USDC" />
+          <button id="balbtn">Ajustar balance</button>
+          <div class="spacer"></div>
+          <button id="resetbtn" class="danger">Reiniciar stats (wipe)</button>
+        </div>
+        <div class="hint">
+          <b>Ajustar balance</b> fija el efectivo y la referencia del ROI (hazlo estando plano).
+          <b>Reiniciar</b> borra posiciones, trades, oportunidades y equity de <b>paper</b>,
+          y reinicia el balance y el reloj de validación. <b>No</b> quita el gate
+          Paper→Live (14 días · 30 operaciones cerradas · ROI&gt;0): el gate simplemente
+          vuelve a contar desde cero.
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="phead">
+        <h2>Mercados Up/Down · 5 min</h2>
+        <div class="spacer"></div>
+        <span class="chip" id="udmaster">—</span>
+      </div>
+      <div class="pbody" id="udtoggles" style="max-height:none"><div class="empty">cargando…</div></div>
+    </div>
+  </div>
+
+  <!-- ================= ROW 1 ================= -->
+  <div class="grid">
+    <div class="panel">
+      <div class="phead"><h2>Curva de equity</h2><div class="spacer"></div>
+        <span class="chip" id="eqrange">—</span></div>
+      <div class="pbody" style="max-height:none"><svg id="eqchart" viewBox="0 0 600 180" preserveAspectRatio="none" style="width:100%;height:180px"></svg></div>
+    </div>
+
+    <div class="panel">
+      <div class="phead"><h2>Gate de validación · Paper → Live</h2></div>
+      <div class="pbody" id="valbox"><div class="empty">cargando…</div></div>
+    </div>
+  </div>
+
+  <!-- ================= ROW 2 ================= -->
+  <div class="grid">
+    <div class="panel">
+      <div class="phead">
+        <h2>Operativa</h2>
+        <div class="spacer"></div>
+        <div class="tabs">
+          <div class="tab active" data-tab="positions">Activas</div>
+          <div class="tab" data-tab="trades">Historial</div>
+        </div>
+      </div>
+      <div class="pbody" id="opbox"><div class="empty">cargando…</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="phead">
+        <h2>Mercados y oportunidades</h2>
+        <div class="spacer"></div>
+        <div class="tabs">
+          <div class="tab active" data-tab2="opps">Oportunidades</div>
+          <div class="tab" data-tab2="markets">Mercados</div>
+        </div>
+      </div>
+      <div class="pbody" id="mkbox"><div class="empty">cargando…</div></div>
+    </div>
+  </div>
+
+  <!-- ================= ROW 3 · INTELIGENCIA ================= -->
+  <div class="grid">
+    <div class="panel">
+      <div class="phead">
+        <h2>Inteligencia · escáner global</h2>
+        <div class="spacer"></div>
+        <div class="tabs">
+          <div class="tab active" data-tab3="ranking">Ranking</div>
+          <div class="tab" data-tab3="cats">Categorías</div>
+        </div>
+      </div>
+      <div class="pbody" id="intelbox"><div class="empty">cargando…</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="phead">
+        <h2>Estrategias</h2>
+        <div class="spacer"></div>
+        <div class="tabs">
+          <div class="tab active" data-tab4="perf">Rendimiento</div>
+          <div class="tab" data-tab4="sigs">Señales</div>
+        </div>
+      </div>
+      <div class="pbody" id="stratbox"><div class="empty">cargando…</div></div>
+    </div>
+  </div>
+
+  <!-- ================= LOGS ================= -->
+  <div class="panel">
+    <div class="phead">
+      <h2>Terminal de logs</h2>
+      <div class="spacer"></div>
+      <div class="filters" id="filters"></div>
+      <button id="clearlogs">Limpiar</button>
+    </div>
+    <div class="term" id="term"></div>
+  </div>
+
+  <div class="foot">Medusa · sin autenticación por diseño · exponer solo en LAN/VPN</div>
+</div>
+
+<script>
+const API = '/api';
+const LEVELS = ['INFO','WARNING','ERROR','TRADE','RISK','SYSTEM'];
+const active = new Set(LEVELS);
+let tab = 'positions', tab2 = 'opps', tab3 = 'ranking', tab4 = 'perf', state = {};
+
+// Ciclo de vida de una estrategia (V3): research -> shadow -> paper -> live_candidate.
+// Solo live_candidate puede tocar dinero real; paper opera exclusivamente contra
+// el motor Paper. El color sube de frío a cálido según el riesgo que implica.
+const PHASE_COLOR = {
+  research: 'var(--muted)',
+  shadow: 'var(--accent-2)',
+  paper: 'var(--accent)',
+  live_candidate: 'var(--orange)',
+};
+
+const $ = id => document.getElementById(id);
+const money = v => (v<0?'-':'') + '$' + Math.abs(v).toFixed(2);
+const pct = v => (v>=0?'+':'') + (v*100).toFixed(1) + '%';
+const cls = v => v > 0 ? 'pos' : (v < 0 ? 'neg' : 'neu');
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hhmm = ts => { try { return new Date(ts).toLocaleTimeString('es-ES',{hour12:false}); } catch { return '--:--:--'; } };
+
+async function api(path, opts) {
+  const r = await fetch(API + path, opts);
+  if (!r.ok) {
+    let detail = r.statusText;
+    try { detail = (await r.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return r.json();
+}
+
+function banner(kind, html) { $('alert').innerHTML = `<div class="banner ${kind}">${html}</div>`; }
+
+/* ---------------- status + toggle ---------------- */
+async function loadStatus() {
+  try {
+    state = await api('/status');
+  } catch {
+    $('engdot').className = 'dot off';
+    $('engtxt').textContent = 'API no disponible';
+    return;
+  }
+  const alive = state.engine_alive;
+  $('engdot').className = 'dot ' + (alive ? 'on' : 'off');
+  $('engtxt').innerHTML = alive
+    ? `engine activo · <b>${state.mode ? state.mode.toUpperCase() : '—'}</b>`
+    : 'engine caído';
+  const age = state.engine_heartbeat_age_seconds;
+  $('hb').textContent = age == null ? '—' : age.toFixed(0) + 's';
+
+  const sw = $('modesw');
+  sw.checked = state.mode === 'live';
+  sw.disabled = !state.live_unlocked && state.mode !== 'live';
+
+  if (state.kill_switch) {
+    banner('err', '🛑 <b>KILL-SWITCH ACTIVO</b> — toda la operativa está detenida. ' +
+      'Pulsa «Kill-switch» para reanudar.');
+  } else if (state.mode === 'live') {
+    banner('warn', '⚠️ <b>MODO LIVE</b> — el bot está operando con dinero real.');
+  } else if (!state.live_unlocked) {
+    banner('lock', '🔒 <b>Live bloqueado.</b> Medusa opera en PAPER con datos reales de ' +
+      'Polymarket. El toggle se habilita solo cuando se cumpla el gate de validación.');
+  } else {
+    banner('warn', '🔓 <b>Live desbloqueado</b> pero el bot sigue en PAPER. ' +
+      'Puedes activar LIVE con el toggle.');
+  }
+  $('killbtn').textContent = state.kill_switch ? 'Reanudar' : 'Kill-switch';
+}
+
+$('modesw').addEventListener('change', async e => {
+  const goLive = e.target.checked;
+  if (!goLive) {
+    try { await api('/mode', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({mode:'paper'})}); } catch (err) { alert(err.message); }
+    return loadStatus();
+  }
+  const phrase = prompt(
+    'Vas a activar LIVE: el bot operará con DINERO REAL.\n\n' +
+    'Escribe exactamente: ACTIVAR LIVE');
+  if (phrase === null) { e.target.checked = false; return; }
+  try {
+    await api('/mode', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({mode:'live', confirm: phrase})});
+  } catch (err) { alert('No se activó LIVE:\n\n' + err.message); }
+  loadStatus();
+});
+
+$('killbtn').addEventListener('click', async () => {
+  const on = !state.kill_switch;
+  if (on && !confirm('¿Detener toda la operativa ahora?')) return;
+  try {
+    await api('/kill-switch', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({enabled:on})});
+  } catch (err) { alert(err.message); }
+  loadStatus();
+});
+
+/* ---------------- metrics ---------------- */
+async function loadMetrics() {
+  let m;
+  try { m = await api('/metrics'); } catch { return; }
+  const cards = [
+    ['Balance (efectivo)', money(m.balance), 'neu'],
+    ['En posiciones', money(m.exposure), 'neu'],
+    ['Equity', money(m.equity), cls(m.equity - m.starting_balance)],
+    ['PnL total', money(m.pnl_total), cls(m.pnl_total)],
+    ['ROI', pct(m.roi), cls(m.roi)],
+    ['Win rate', (m.win_rate*100).toFixed(1) + '%', 'neu'],
+    ['Operaciones', String(m.trades), 'neu'],
+    ['Abiertas', String(m.open_positions), 'neu'],
+    ['Mercados', String(m.markets_traded ?? 0), 'neu'],
+    ['Max drawdown', (m.max_drawdown*100).toFixed(1) + '%', m.max_drawdown > 0 ? 'neg' : 'neu'],
+    ['Edge medio', m.avg_edge.toFixed(3), cls(m.avg_edge)],
+    ['Costes sim.', money(m.total_costs), 'neu'],
+  ];
+  $('cards').innerHTML = cards.map(([k,v,c]) =>
+    `<div class="card"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`).join('');
+}
+
+/* ---------------- equity chart ---------------- */
+async function loadEquity() {
+  let pts;
+  try { pts = await api('/equity?limit=300'); } catch { return; }
+  const svg = $('eqchart');
+  if (!pts.length) { svg.innerHTML = '<text x="300" y="95" fill="#8b9bb0" font-size="12" text-anchor="middle">sin datos todavía</text>'; return; }
+  const vals = pts.map(p => p.equity);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const pad = (max - min) * 0.1 || 1;
+  const lo = min - pad, hi = max + pad;
+  const x = i => (i / Math.max(pts.length - 1, 1)) * 600;
+  const y = v => 180 - ((v - lo) / (hi - lo)) * 180;
+  const line = vals.map((v,i) => `${i?'L':'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const area = `${line} L600,180 L0,180 Z`;
+  const up = vals[vals.length-1] >= vals[0];
+  const col = up ? '#2ecc71' : '#e74c3c';
+  svg.innerHTML =
+    `<defs><linearGradient id="g" x1="0" x2="0" y1="0" y2="1">
+       <stop offset="0%" stop-color="${col}" stop-opacity=".28"/>
+       <stop offset="100%" stop-color="${col}" stop-opacity="0"/>
+     </linearGradient></defs>
+     <path d="${area}" fill="url(#g)"/>
+     <path d="${line}" fill="none" stroke="${col}" stroke-width="1.8" vector-effect="non-scaling-stroke"/>`;
+  $('eqrange').textContent = `${money(min)} – ${money(max)} · ${pts.length} puntos`;
+}
+
+/* ---------------- validation ---------------- */
+const NAMES = {dias_minimos:'Días en paper', operaciones_minimas:'Operaciones cerradas', roi_positivo:'ROI positivo'};
+async function loadValidation() {
+  let v;
+  try { v = await api('/validation'); } catch { return; }
+  const rows = Object.entries(v.checks).map(([k,c]) => `
+    <div class="check">
+      <span class="ico">${c.pass ? '✅' : '⬜'}</span>
+      <span class="nm">${NAMES[k] || k}</span>
+      <span class="vl ${c.pass ? 'pos' : ''}">${typeof c.actual === 'number' ? c.actual : esc(c.actual)}
+        <span style="color:#4a5a6e"> / ${esc(c.required)}</span></span>
+    </div>`).join('');
+  const prog = Math.min(v.days_running / (v.checks.dias_minimos.required || 7), 1) * 100;
+  const btn = v.eligible_for_live && !v.live_unlocked
+    ? `<button class="warn" id="unlockbtn" style="margin-top:12px;width:100%">Desbloquear LIVE…</button>`
+    : (v.live_unlocked
+        ? `<button class="danger" id="lockbtn" style="margin-top:12px;width:100%">Volver a bloquear LIVE</button>`
+        : '');
+  $('valbox').innerHTML = `
+    <div class="checks">${rows}</div>
+    <div class="bar"><div style="width:${prog.toFixed(0)}%"></div></div>
+    <div style="color:#8b9bb0;font-size:11.5px;margin-top:7px">
+      ${v.days_running.toFixed(2)} de ${v.window} · ${v.eligible_for_live
+        ? '<span class="pos">gate superado</span>'
+        : 'gate no superado — Live permanece bloqueado'}
+    </div>${btn}`;
+
+  const ub = $('unlockbtn');
+  if (ub) ub.onclick = async () => {
+    const p = prompt('Desbloquear LIVE habilita operar con DINERO REAL.\n\nEscribe exactamente: ACTIVAR LIVE');
+    if (p === null) return;
+    try {
+      await api('/live/unlock', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({confirm:p})});
+    } catch (err) { alert(err.message); }
+    loadValidation(); loadStatus();
+  };
+  const lb = $('lockbtn');
+  if (lb) lb.onclick = async () => {
+    try { await api('/live/lock', {method:'POST'}); } catch (err) { alert(err.message); }
+    loadValidation(); loadStatus();
+  };
+}
+
+/* ---------------- tables ---------------- */
+function table(cols, rows) {
+  if (!rows.length) return '<div class="empty">sin datos</div>';
+  return `<table><thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+    <tbody>${rows.join('')}</tbody></table>`;
+}
+
+async function loadOps() {
+  try {
+    if (tab === 'positions') {
+      const ps = await api('/positions');
+      $('opbox').innerHTML = table(['Mercado','Lado','Entrada','Shares','Coste','PnL no realizado'],
+        ps.map(p => `<tr>
+          <td class="q" title="${esc(p.question)}">${esc(p.question)}</td>
+          <td>${esc(p.outcome)}</td><td>${p.avg_price.toFixed(3)}</td>
+          <td>${p.size.toFixed(1)}</td><td>${money(p.cost_basis)}</td>
+          <td class="${cls(p.unrealized_pnl)}">${money(p.unrealized_pnl)}</td></tr>`));
+    } else {
+      const ts = await api('/trades?limit=100');
+      $('opbox').innerHTML = table(['Cerrada','Mercado','Lado','Entrada','Salida','PnL','ROI'],
+        ts.map(t => `<tr>
+          <td>${hhmm(t.closed_at)}</td>
+          <td class="q" title="${esc(t.question)}">${esc(t.question)}</td>
+          <td>${esc(t.outcome)}</td><td>${t.entry_price.toFixed(3)}</td>
+          <td>${t.exit_price.toFixed(3)}</td>
+          <td class="${cls(t.pnl)}">${money(t.pnl)}</td>
+          <td class="${cls(t.roi)}">${pct(t.roi)}</td></tr>`));
+    }
+  } catch {}
+}
+
+async function loadMk() {
+  try {
+    if (tab2 === 'opps') {
+      const os = await api('/opportunities?limit=60');
+      // Sin columna "Conf.": el placeholder actual satura al 100% en todos los
+      // mercados que pasan el filtro y no discrimina nada. Volvera cuando la
+      // confianza salga de un modelo real.
+      $('mkbox').innerHTML = table(['Hora','Mercado','Lado','Precio','P. mercado','P. Medusa','Edge','Acción'],
+        os.map(o => `<tr>
+          <td>${hhmm(o.created_at)}</td>
+          <td class="q" title="${esc(o.question)}">${esc(o.question)}</td>
+          <td>${esc(o.outcome)}</td><td>${o.market_price.toFixed(3)}</td>
+          <td>${o.market_prob.toFixed(3)}</td><td>${o.medusa_prob.toFixed(3)}</td>
+          <td class="${cls(o.edge)}">${o.edge>=0?'+':''}${o.edge.toFixed(3)}</td>
+          <td>${esc(o.action)}</td></tr>`));
+    } else {
+      const ms = await api('/markets?limit=60');
+      $('mkbox').innerHTML = table(['Mercado','YES','NO','Spread','Vol 24h','Liquidez'],
+        ms.map(m => `<tr>
+          <td class="q" title="${esc(m.question)}">${esc(m.question)}</td>
+          <td>${m.yes_price.toFixed(3)}</td><td>${m.no_price.toFixed(3)}</td>
+          <td>${m.spread.toFixed(3)}</td>
+          <td>$${(m.volume_24h/1000).toFixed(1)}k</td>
+          <td>$${(m.liquidity/1000).toFixed(1)}k</td></tr>`));
+    }
+  } catch {}
+}
+
+document.querySelectorAll('[data-tab]').forEach(el => el.onclick = () => {
+  document.querySelectorAll('[data-tab]').forEach(x => x.classList.remove('active'));
+  el.classList.add('active'); tab = el.dataset.tab; loadOps();
+});
+document.querySelectorAll('[data-tab2]').forEach(el => el.onclick = () => {
+  document.querySelectorAll('[data-tab2]').forEach(x => x.classList.remove('active'));
+  el.classList.add('active'); tab2 = el.dataset.tab2; loadMk();
+});
+
+/* ---------------- inteligencia ---------------- */
+async function loadIntel() {
+  try {
+    if (tab3 === 'ranking') {
+      const rs = await api('/intelligence/ranking?limit=25');
+      $('intelbox').innerHTML = table(['Mercado','Cat.','Score','YES','Spread','Vol 24h','Liq.'],
+        rs.map(m => `<tr>
+          <td class="q" title="${esc(m.question)}">${esc(m.question)}</td>
+          <td>${esc(m.medusa_category)}</td>
+          <td><b>${(m.opportunity_score ?? 0).toFixed(1)}</b></td>
+          <td>${m.yes_price.toFixed(3)}</td>
+          <td>${m.spread.toFixed(3)}</td>
+          <td>$${(m.volume_24h/1000).toFixed(1)}k</td>
+          <td>$${(m.liquidity/1000).toFixed(1)}k</td></tr>`));
+    } else {
+      const cs = await api('/intelligence/categories');
+      $('intelbox').innerHTML = table(['Categoría','Mercados','Score medio','Score máx','Vol 24h','Liquidez'],
+        cs.map(c => `<tr>
+          <td>${esc(c.category)}</td><td>${c.markets}</td>
+          <td>${c.avg_score.toFixed(1)}</td><td>${c.max_score.toFixed(1)}</td>
+          <td>$${(c.volume_24h/1000).toFixed(0)}k</td>
+          <td>$${(c.liquidity/1000).toFixed(0)}k</td></tr>`));
+    }
+  } catch {}
+}
+
+async function loadStrats() {
+  try {
+    if (tab4 === 'perf') {
+      const st = await api('/strategies');
+      const counts = st.signal_counts || {};
+      const perfByStrat = {};
+      (st.performance || []).forEach(p => {
+        (perfByStrat[p.strategy] = perfByStrat[p.strategy] || []).push(p);
+      });
+      const rows = (st.registry || []).map(r => {
+        const c = counts[r.name] || {};
+        const open = c.open || 0, res = c.resolved || 0;
+        const cells = perfByStrat[r.name] || [];
+        // Mejor celda con muestra: la más cercana a operar.
+        const best = cells.slice().sort((a,b) => b.weight - a.weight || b.n - a.n)[0];
+        // El estado ES la fase real (V3), no se deduce de booleanos. Antes se
+        // calculaba con live_enabled/can_trade (lógica V2) y por tanto una
+        // estrategia ascendida a `paper` seguía apareciendo como "shadow": el
+        // panel mentía justo sobre lo que existe para enseñar.
+        const estado = r.can_trade
+          ? `<span style="color:${PHASE_COLOR[r.phase] || 'var(--txt)'}">${esc(r.phase)}</span>`
+          : '<span style="color:var(--orange)" title="Nunca opera: necesita ejecutar dos patas a la vez">solo alerta</span>';
+        return `<tr>
+          <td>${esc(r.name)}</td><td>${estado}</td>
+          <td>${open} / ${res}</td>
+          <td>${best ? `${best.category} · n=${best.n}` : '—'}</td>
+          <td class="neu" style="color:#8b9bb0" title="Cota optimista: te llenan al bid, sin cruzar el spread. Es un TECHO, no un resultado.">
+            ${best && best.avg_roi_maker != null ? pct(best.avg_roi_maker) : '—'}</td>
+          <td class="${best ? cls(best.avg_roi) : 'neu'}" title="Cota realista: cruzas el spread y pagas el ask. Es la que decide.">
+            <b>${best ? pct(best.avg_roi) : '—'}</b></td>
+          <td class="neg" title="Lo que el spread se come: ROI techo − ROI real">
+            ${best && best.spread_toll != null ? '−' + (best.spread_toll*100).toFixed(1) + '%' : '—'}</td>
+          <td>${best ? `<b>${best.weight.toFixed(2)}</b>` : '0.00'}</td></tr>`;
+      });
+      $('stratbox').innerHTML =
+        table(['Estrategia','Estado','Señales (abiertas/resueltas)','Mejor celda',
+               'ROI techo (maker)','ROI real (taker)','Peaje spread','Peso'], rows) +
+        `<div style="color:#8b9bb0;font-size:11px;margin-top:8px;line-height:1.6">
+          <b>Fases:</b> <span style="color:${PHASE_COLOR.research}">research</span> (fuera del ciclo) →
+          <span style="color:${PHASE_COLOR.shadow}">shadow</span> (registra, nunca opera) →
+          <span style="color:${PHASE_COLOR.paper}">paper</span> (opera solo contra el motor Paper) →
+          <span style="color:${PHASE_COLOR.live_candidate}">live_candidate</span> (única que puede tocar dinero real).<br>
+          <b>Peso 0</b> = sin historial suficiente (mín. ${st.min_samples} señales resueltas) o sin edge
+          demostrado ⇒ no opera, esté en la fase que esté. Las señales se miden contra la
+          resolución REAL del mercado, así que las columnas de ROI siguen vacías hasta que los
+          mercados resuelvan.<br>
+          <b>Doble cota:</b> <span style="color:#8b9bb0">ROI techo (maker)</span> asume que te llenan
+          al bid sin cruzar el spread — es un <b>techo optimista, no un resultado</b>.
+          <b>ROI real (taker)</b> cruza el spread y paga el ask: <b>es la única que decide</b>, y es
+          la que usa el asignador para dar peso. Si el techo es bonito y el real es negativo, la
+          estrategia <b>no tiene negocio</b>: el peaje se lo come. Medir solo la cota maker es
+          exactamente cómo un bot "parece" rentable sin serlo.</div>`;
+    } else {
+      const ss = await api('/signals?limit=60');
+      $('stratbox').innerHTML = table(['Hora','Estrategia','Mercado','Lado','Precio','Edge','Estado'],
+        ss.map(s => `<tr>
+          <td>${hhmm(s.ts)}</td><td>${esc(s.strategy)}</td>
+          <td class="q" title="${esc(s.question)}">${esc(s.question)}</td>
+          <td>${esc(s.outcome)}</td><td>${s.entry_price.toFixed(3)}</td>
+          <td class="${cls(s.edge)}">${s.edge>=0?'+':''}${s.edge.toFixed(3)}</td>
+          <td>${s.status === 'resolved'
+            ? (s.won ? '<span class="pos">ganada</span>' : '<span class="neg">perdida</span>')
+            : esc(s.status)}${s.traded ? ' · <b>operada</b>' : ''}</td></tr>`));
+    }
+  } catch {}
+}
+
+document.querySelectorAll('[data-tab3]').forEach(el => el.onclick = () => {
+  document.querySelectorAll('[data-tab3]').forEach(x => x.classList.remove('active'));
+  el.classList.add('active'); tab3 = el.dataset.tab3; loadIntel();
+});
+document.querySelectorAll('[data-tab4]').forEach(el => el.onclick = () => {
+  document.querySelectorAll('[data-tab4]').forEach(x => x.classList.remove('active'));
+  el.classList.add('active'); tab4 = el.dataset.tab4; loadStrats();
+});
+
+/* ---------------- cuenta paper + toggles Up/Down ---------------- */
+async function loadUpdownToggles() {
+  let d;
+  try { d = await api('/updown/assets'); } catch { return; }
+  const active = new Set(d.active || []);
+  $('udmaster').innerHTML = d.master_enabled
+    ? `<span class="pos">motor ON</span> · apuesta $${(d.policy?.stake_usd ?? 0).toFixed(0)}`
+    : '<span class="neg">motor OFF</span>';
+  const rows = (d.markets || []).map(m => {
+    const on = active.has(m);
+    return `<div class="togglerow">
+      <span class="nm">${esc(m.toUpperCase())}</span>
+      <span class="st">${on ? 'operando' : 'parado'}</span>
+      <label class="switch"><input type="checkbox" data-ud="${esc(m)}" ${on?'checked':''}
+        ${d.master_enabled?'':'disabled'}/><span class="slider"></span></label>
+    </div>`;
+  }).join('');
+  // --- Risk manager: foto en vivo + limites ---
+  const rk = d.risk || {}, rl = d.risk_limits || {};
+  const exposurePct = rk.balance > 0 ? (rk.open_exposure / rk.balance) : 0;
+  const inCooldown = (rk.consecutive_losses ?? 0) >= (rl.max_consecutive_losses ?? 99)
+    && rk.last_loss_epoch > 0 && (Date.now()/1000 - rk.last_loss_epoch) < (rl.cooldown_secs ?? 0);
+  const dailyStop = rk.day_start_equity > 0
+    && (rk.today_pnl ?? 0) <= -(rl.max_daily_loss_pct ?? 1) * rk.day_start_equity;
+  const riskRows = [
+    ['Apuesta', rl.stake_fraction > 0 ? `${(rl.stake_fraction*100).toFixed(1)}% · $${rl.min_stake}–${rl.max_stake}` : `$${(rl.max_stake ?? 0).toFixed(0)} fijo`],
+    ['Abiertas', `${rk.open_count ?? 0} / ${rl.max_open ?? '—'}`],
+    ['Exposición', `${money(rk.open_exposure ?? 0)} · ${(exposurePct*100).toFixed(0)}% / ${((rl.max_exposure_pct ?? 0)*100).toFixed(0)}%`],
+    ['Hoy', `${rk.today_bets ?? 0} apuestas · PnL <span class="${cls(rk.today_pnl ?? 0)}">${money(rk.today_pnl ?? 0)}</span> / ${rl.max_daily_bets ?? '—'} máx`],
+    ['Racha pérdidas', `${rk.consecutive_losses ?? 0} / ${rl.max_consecutive_losses ?? '—'}`],
+  ];
+  const riskState = dailyStop
+    ? '<span class="neg">■ stop diario</span>'
+    : (inCooldown ? '<span class="neg">■ cooldown anti-racha</span>'
+       : ((rk.open_count ?? 0) >= (rl.max_open ?? 99) ? '<span style="color:var(--orange)">■ máx. abiertas</span>'
+          : '<span class="pos">■ operando</span>'));
+  const riskHtml = `<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <b style="font-size:11px;letter-spacing:.4px;color:var(--muted);text-transform:uppercase">Risk manager</b>
+      <div class="spacer"></div>${riskState}</div>
+    ${riskRows.map(([k,v]) => `<div class="togglerow" style="padding:4px 2px">
+      <span class="st" style="width:auto;flex:1;text-align:left;color:var(--muted)">${k}</span>
+      <span style="font-family:var(--mono);font-size:12px">${v}</span></div>`).join('')}
+  </div>`;
+  $('udtoggles').innerHTML = rows +
+    `<div class="hint">Elige qué mercados de 5 min opera el bot; los cambios se aplican en
+     segundos, sin reiniciar. ${d.master_enabled ? '' :
+     'El motor está apagado en el .env (UPDOWN_ENABLED=false): los toggles no operarán hasta encenderlo.'}</div>`
+    + riskHtml;
+  document.querySelectorAll('#udtoggles [data-ud]').forEach(el => el.onchange = async () => {
+    try {
+      await api('/updown/assets', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({asset: el.dataset.ud, enabled: el.checked})});
+    } catch (err) { alert(err.message); }
+    loadUpdownToggles();
+  });
+}
+
+$('balbtn').onclick = async () => {
+  const v = parseFloat($('balinput').value);
+  if (!isFinite(v) || v < 0) { alert('Introduce un balance válido (≥ 0).'); return; }
+  if (!confirm(`¿Ajustar el balance de paper a $${v.toFixed(2)}?\n\nFija también la referencia del ROI. Hazlo estando plano (sin posiciones abiertas).`)) return;
+  try {
+    await api('/paper/balance', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({balance: v})});
+  } catch (err) { alert(err.message); }
+  $('balinput').value = '';
+  loadMetrics(); loadValidation();
+};
+
+$('resetbtn').onclick = async () => {
+  const raw = prompt('WIPE de stats de paper: borra posiciones, trades, oportunidades y equity, y reinicia la cuenta desde cero.\n\nBalance inicial (vacío = valor por defecto):');
+  if (raw === null) return;
+  const t = raw.trim();
+  const sb = t === '' ? null : parseFloat(t);
+  if (t !== '' && (!isFinite(sb) || sb < 0)) { alert('Balance inicial no válido.'); return; }
+  if (!confirm('¿Seguro? Esto NO se puede deshacer.\n\nEl gate de 14 días / 30 operaciones / ROI>0 se mantiene pero vuelve a contar desde cero.')) return;
+  try {
+    const r = await api('/paper/reset', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({starting_balance: sb, confirm:'RESET'})});
+    alert('Stats reiniciadas. Balance inicial: $' + r.starting_balance.toFixed(2));
+  } catch (err) { alert('No se pudo reiniciar:\n\n' + err.message); }
+  tick(); loadEquity(); loadValidation();
+};
+
+/* ---------------- log terminal ---------------- */
+$('filters').innerHTML = LEVELS.map(l => `<span class="f on" data-l="${l}">${l}</span>`).join('');
+document.querySelectorAll('.f').forEach(el => el.onclick = () => {
+  const l = el.dataset.l;
+  if (active.has(l)) { active.delete(l); el.classList.remove('on'); }
+  else { active.add(l); el.classList.add('on'); }
+  document.querySelectorAll('#term .line').forEach(n => {
+    n.style.display = active.has(n.dataset.l) ? '' : 'none';
+  });
+});
+$('clearlogs').onclick = () => { $('term').innerHTML = ''; };
+
+function addLog(e) {
+  const term = $('term');
+  const atBottom = term.scrollHeight - term.scrollTop - term.clientHeight < 40;
+  const lvl = LEVELS.includes(e.level) ? e.level : 'INFO';
+  const div = document.createElement('div');
+  div.className = 'line ' + lvl;
+  div.dataset.l = lvl;
+  div.innerHTML = `<span class="t">${hhmm(e.ts)}</span><span class="l">${lvl}</span><span>${esc(e.message)}</span>`;
+  if (!active.has(lvl)) div.style.display = 'none';
+  term.appendChild(div);
+  while (term.childElementCount > 600) term.removeChild(term.firstChild);
+  if (atBottom) term.scrollTop = term.scrollHeight;
+}
+
+function connectLogs() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws/logs`);
+  ws.onmessage = ev => { try { addLog(JSON.parse(ev.data)); } catch {} };
+  ws.onclose = () => {
+    addLog({ts:new Date().toISOString(), level:'SYSTEM', message:'Conexión de logs perdida, reintentando…'});
+    setTimeout(connectLogs, 4000);
+  };
+  ws.onerror = () => ws.close();
+}
+
+/* ---------------- loop ---------------- */
+function tick() { loadStatus(); loadMetrics(); loadOps(); loadMk(); }
+tick(); loadEquity(); loadValidation(); loadIntel(); loadStrats(); loadUpdownToggles(); connectLogs();
+setInterval(tick, 5000);
+// El escaneo global corre cada 5 min y las señales se resuelven cada 30 min:
+// refrescar la inteligencia cada 30s es más que suficiente.
+setInterval(() => { loadEquity(); loadValidation(); loadIntel(); loadStrats(); loadUpdownToggles(); }, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+# Secretos / entorno
+.env
+.env.*
+!.env.example
+secrets/*
+!secrets/.gitkeep
+
+# Artefactos de deploy
+*.tgz
+
+# Logs y datos
+logs/*
+!logs/.gitkeep
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Frontend
+node_modules/
+dist/
+build/
+
+# SO / editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

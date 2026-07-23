@@ -1,0 +1,23 @@
+# ---------------------------------------------------------------------------
+# Dependencias del nucleo (engine + api).
+#
+# NOTA hardware (CT202: 2 vCPU AMD G-T56N, 3 GB RAM): no se usa numpy/scipy. El
+# Prediction Engine trabaja con aritmetica de Python puro. Si algun dia se
+# añaden, fijar numpy<2 y scipy<1.14 por compatibilidad con esta CPU.
+# ---------------------------------------------------------------------------
+
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+sqlalchemy[asyncio]==2.0.*
+asyncpg==0.30.*
+alembic==1.14.*
+redis==5.2.*
+pydantic==2.*
+pydantic-settings==2.*
+httpx==0.28.*
+structlog==24.*
+tenacity==9.*
+
+# Live trading (CLOB de Polymarket). Solo se importa dentro de
+# medusa/execution/live.py, asi que Paper Mode funciona aunque falle.
+py-clob-client==0.34.*
