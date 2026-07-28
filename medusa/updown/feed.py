@@ -35,11 +35,21 @@ class PriceFeed:
         self.log = log
         self._client = httpx.AsyncClient(timeout=timeout)
         self._last_spot: float | None = None
-        # Volatilidad por segundo, cacheada: no cambia de forma en 5 min y pedir
-        # 60 klines cada tick seria puro desperdicio.
+        self._last_spot_at: float = 0.0
+        # Cuanto puede envejecer el spot antes de considerarlo inservible. El
+        # modelo divide por sigma*sqrt(secs_left): a 10s del cierre el
+        # denominador es minusculo, asi que un precio de hace un minuto produce
+        # un z enorme y una certeza FALSA de casi 1.0. Antes spot() devolvia
+        # calladamente el ultimo valor conocido sin decir de cuando era, y el
+        # trader lo trataba como si fuese de ahora mismo: con Binance caido o
+        # lento el bot apostaba a 0.95 sobre un precio muerto. Ahora, pasado este
+        # plazo, spot() devuelve None y el tick simplemente no apuesta.
+        self._max_spot_age: float = 15.0
+        # Volatilidad por segundo, cacheada. TTL corto: el pico de volatilidad es
+        # justo el momento en que la estimacion importa.
         self._sigma_sec: float | None = None
         self._sigma_at: float = 0.0
-        self._sigma_ttl: float = 120.0
+        self._sigma_ttl: float = 30.0
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -61,14 +71,25 @@ class PriceFeed:
 
     # --------------------------------------------------------------- spot ----
     async def spot(self) -> float | None:
-        """Ultimo precio spot. Cae al ultimo conocido si el feed falla."""
+        """Ultimo precio spot, o None si no hay uno lo bastante RECIENTE.
+
+        El fallback al ultimo conocido solo vale unos segundos: un precio viejo
+        no es un dato degradado, es un dato falso para este modelo (ver
+        `_max_spot_age`).
+        """
         data = await self._get("/api/v3/ticker/price", {"symbol": self.symbol})
         if isinstance(data, dict) and "price" in data:
             try:
                 self._last_spot = float(data["price"])
+                self._last_spot_at = time.time()
                 return self._last_spot
             except (TypeError, ValueError):
                 pass
+        age = time.time() - self._last_spot_at
+        if self._last_spot is None or age > self._max_spot_age:
+            if self.log is not None:
+                self.log.warning("updown.spot_stale", symbol=self.symbol, age=round(age, 1))
+            return None
         return self._last_spot
 
     # ---------------------------------------------------------- open S0 ------
@@ -117,7 +138,20 @@ class PriceFeed:
         ]
         if len(rets) < 2:
             return self._sigma_sec
-        sd_per_min = statistics.pstdev(rets)
+        # SESGO DE CERTEZA POR SIGMA VIEJA (2026-07-28): antes esto era la
+        # desviacion de los 60 ultimos minutos y nada mas. Pero el trader entra
+        # justo cuando el precio ACABA de moverse fuerte -- es decir, en un pico
+        # de volatilidad -- y en ese momento la media de la ultima hora esta muy
+        # por debajo de la volatilidad real. Sigma pequeña => z grande => P(Up)
+        # ~ 0.99 => el bot cree que es casi seguro y paga 0.95 por algo que
+        # todavia puede darse la vuelta. Se toma el MAXIMO entre la sigma de la
+        # hora y la de los ultimos ~15 minutos: nunca mas confiado que el regimen
+        # reciente, que es el sesgo correcto para una apuesta binaria donde
+        # fallar cuesta el 100% del stake.
+        sd_long = statistics.pstdev(rets)
+        recent = rets[-15:]
+        sd_short = statistics.pstdev(recent) if len(recent) >= 2 else 0.0
+        sd_per_min = max(sd_long, sd_short)
         self._sigma_sec = sd_per_min / math.sqrt(60.0)
         self._sigma_at = now
         return self._sigma_sec

@@ -24,6 +24,7 @@ traga con un warning; nunca lanza hacia el loop del engine.
 
 from __future__ import annotations
 
+import datetime as dt
 import time
 
 from medusa.config import get_settings
@@ -160,16 +161,49 @@ class UpDownTrader:
             except Exception as exc:  # noqa: BLE001 - una posicion no bloquea a las demas
                 self.log.warning("updown.settle_one_fail", position=pos.get("id"), error=str(exc))
 
+    def _age_secs(self, pos: dict) -> float:
+        """Segundos desde que se abrio la posicion (0 si la fecha no es usable)."""
+        opened = pos.get("opened_at")
+        if not isinstance(opened, dt.datetime):
+            return 0.0
+        if opened.tzinfo is None:
+            opened = opened.replace(tzinfo=dt.timezone.utc)
+        return (dt.datetime.now(dt.timezone.utc) - opened).total_seconds()
+
     async def _settle_one(self, pos: dict) -> None:
+        # FUGA DE POSICIONES ATASCADAS (2026-07-28): antes, si Gamma no devolvia
+        # el mercado, seguia marcado active, o el precio se quedaba en un valor
+        # intermedio, esta funcion hacia `return` y lo reintentaba... para
+        # siempre. La posicion quedaba ABIERTA de forma permanente, comiendose un
+        # hueco de updown_max_open (3) y su parte del presupuesto de exposicion,
+        # e inflando today_bets. Con dos o tres atascadas el subsistema deja de
+        # apostar del todo sin un solo error en los logs. La config ya preveia
+        # esto (UPDOWN_VOID_AFTER) pero NO estaba cableada a ningun sitio: era
+        # config muerta. Ahora, pasado ese plazo, la posicion se marca a mercado
+        # y se cierra en vez de quedarse colgada.
+        age = self._age_secs(pos)
+        expired = age > self.s.updown_void_after
+
         market = await self.market.client.fetch_market_by_condition(pos["market_id"])
-        if market is None or market.active:
-            return  # aun no resuelto: se reintenta el proximo tick
+        if market is None:
+            if expired:
+                await self._void(pos, 0.0, "anulada: mercado ilocalizable")
+            return
         up = pos["outcome"] in ("YES", "Up")
         settle = market.yes_price if up else market.no_price
+        if market.active:
+            if expired:
+                # La ventana dura 300s: si sigue "activa" una hora despues, el
+                # dato de Gamma esta roto, no es que el mercado siga vivo.
+                await self._void(pos, settle, "anulada: ventana sin cerrar")
+            return
         if settle >= 0.99:
             settle = 1.0
         elif settle <= 0.01:
             settle = 0.0
+        elif expired:
+            await self._void(pos, settle, "anulada: resolución ambigua")
+            return
         else:
             return  # resolucion ambigua (precio intermedio): esperar
         proceeds = settle * pos["size"]
@@ -193,6 +227,32 @@ class UpDownTrader:
         await self.notifier.trade_exit(
             question=closed["question"], outcome=closed["outcome"], exit_price=settle,
             pnl=pnl, roi=roi, reason="resolución Up/Down", mode="paper",
+        )
+
+    async def _void(self, pos: dict, mark: float, reason: str) -> None:
+        """Cierra una posicion atascada marcandola a `mark` (0..1).
+
+        No inventa un ganador: liquida al precio que el mercado marque en ese
+        momento (0 si no hay dato). Lo importante es liberar el hueco y la
+        exposicion; el PnL resultante es honesto porque sale del mismo flujo de
+        caja que cualquier otra salida.
+        """
+        mark = min(max(mark, 0.0), 1.0)
+        proceeds = mark * pos["size"]
+        closed = await repo.record_exit(
+            position_id=pos["id"], mode="paper", exit_price=mark,
+            proceeds=proceeds, cost=0.0, reason=reason, balance_delta=proceeds,
+        )
+        if not closed:
+            return
+        self.log.warning(
+            "updown.voided", position=pos["id"], market=pos.get("market_id"),
+            mark=round(mark, 3), reason=reason, age_secs=round(self._age_secs(pos)),
+        )
+        await self.publish_log(
+            LogType.RISK,
+            f"Up/Down: posición #{pos['id']} cerrada por timeout @ {mark:.3f} — {reason}",
+            {"market_id": pos.get("market_id"), "pnl": round(closed["pnl"], 2)},
         )
 
     def _prune_caches(self) -> None:
@@ -321,11 +381,24 @@ class UpDownTrader:
         # 1-2% de techo, con una perdida del 100% del stake si falla. Se
         # comprueba aqui el precio MEDIO real del fill, no el nominal de la
         # decision.
-        if result.avg_price > self.s.updown_max_ask:
+        #
+        # TERCERA VUELTA (2026-07-28): las dos guardas de abajo miraban
+        # `result.avg_price`, que es la media de `Fill.price` -- el precio SIN
+        # fee. Pero lo que sale de la caja y lo que se apunta como cost_basis es
+        # `result.cash_out` = nocional + fees. Es decir: el PnL SI cobra el
+        # peaje, pero los candados que deben evitarlo NO lo veian. El coste real
+        # por share es cash_out/filled_size, y es contra ese numero contra el que
+        # hay que medir tanto el techo como el EV. Con fee_bps sobre min(p,1-p) y
+        # asks cerca de 0.95, la fee anade ~0.001-0.003 por share: justo del
+        # orden del min_ev configurado (0.02), o sea que la omision se comia
+        # hasta un 15% del margen exigido sin que ningun candado saltara.
+        unit_cost = result.cash_out / result.filled_size if result.filled_size else 0.0
+
+        if unit_cost > self.s.updown_max_ask:
             self.log.info(
                 "updown.fill_above_ceiling", slug=window.slug,
-                avg_price=round(result.avg_price, 4), ceiling=self.s.updown_max_ask,
-                decision_ask=decision.ask,
+                unit_cost=round(unit_cost, 4), avg_price=round(result.avg_price, 4),
+                ceiling=self.s.updown_max_ask, decision_ask=decision.ask,
             )
             self._acted.add(window.slug)
             return
@@ -340,11 +413,12 @@ class UpDownTrader:
         # es exactamente por que el subsistema no pasa a positivo. Aqui se
         # revalida el EV contra el precio MEDIO REAL del fill: si tras el peaje ya
         # no queda el margen minimo, no se abre.
-        real_ev = decision.fair_prob - result.avg_price
+        real_ev = decision.fair_prob - unit_cost
         if real_ev < self.s.updown_min_ev:
             self.log.info(
                 "updown.ev_eaten_by_fill", slug=window.slug,
-                avg_price=round(result.avg_price, 4), nominal_ev=decision.ev,
+                unit_cost=round(unit_cost, 4), avg_price=round(result.avg_price, 4),
+                nominal_ev=decision.ev,
                 real_ev=round(real_ev, 4), min_ev=self.s.updown_min_ev,
             )
             self._acted.add(window.slug)
