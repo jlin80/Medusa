@@ -14,6 +14,7 @@ en el entorno real donde corre el bot.
 """
 
 import asyncio
+import math
 import sys
 
 sys.path.insert(0, "/app")
@@ -830,11 +831,20 @@ def test_updown() -> None:
 
     from medusa.updown.trader import UpDownTrader as _UDT
     open_src = _insp2.getsource(_UDT._open)
-    check("FIX: _open comprueba el precio MEDIO real contra max_ask antes de registrar la entrada",
-          "result.avg_price > self.s.updown_max_ask" in open_src,
+    # El coste real por share es cash_out/filled_size (nocional + fees), que es
+    # justo lo que se apunta como cost_basis. Comprobar `avg_price` (sin fee)
+    # dejaba el peaje fuera de los dos candados que existen para cobrarlo.
+    check("FIX: _open comprueba el coste MEDIO real (con fees) contra max_ask antes de registrar la entrada",
+          "unit_cost > self.s.updown_max_ask" in open_src,
           "sin esto, un fill que camina el libro puede superar el techo anti-Hermes sin ser detectado")
+    check("ese coste medio incluye las fees (cash_out/filled_size, no avg_price)",
+          "result.cash_out / result.filled_size" in open_src,
+          "avg_price es la media de Fill.price SIN fee; el cost_basis apuntado si las lleva")
     check("la comprobacion va ANTES de record_entry (rechaza sin comprometer la posicion)",
-          open_src.find("result.avg_price > self.s.updown_max_ask") < open_src.find("record_entry"))
+          open_src.find("unit_cost > self.s.updown_max_ask") < open_src.find("record_entry"))
+    check("FIX: el EV real tambien se revalida contra el coste con fees",
+          "real_ev = decision.fair_prob - unit_cost" in open_src,
+          "el min_ev debe medirse contra lo que de verdad sale de la caja")
 
     # --- integracion con el ledger real: manage_positions IGNORA las posiciones
     #     updown (las gestiona su propio loop, que es el unico settler) ---
@@ -852,6 +862,51 @@ def test_updown() -> None:
     settle_src = _insp.getsource(UpDownTrader._settle_one)
     check("el trader liquida updown contra la resolucion (record_exit a 1/0)",
           "record_exit" in settle_src and '("YES", "Up")' in settle_src)
+
+    # --- BUG REAL (2026-07-28): _settle_one reintentaba SIN PLAZO en los tres
+    #     caminos de no-resolucion (Gamma None / market.active / precio
+    #     intermedio). La posicion quedaba abierta para siempre comiendose un
+    #     hueco de updown_max_open y su parte de la exposicion, y el risk manager
+    #     bloqueaba todas las entradas nuevas SIN un solo error en los logs.
+    #     UPDOWN_VOID_AFTER existia en config pero no estaba cableada a nada. ---
+    check("FIX: _settle_one aplica UPDOWN_VOID_AFTER (la config ya no esta muerta)",
+          "updown_void_after" in settle_src,
+          "sin plazo, una ventana que no resuelve limpia deja la posicion abierta para siempre")
+    check("los tres caminos de no-resolucion pueden anular la posicion",
+          settle_src.count("_void(") >= 3,
+          "market=None, market.active y precio intermedio: los tres deben tener salida")
+    void_src = _insp.getsource(UpDownTrader._void)
+    check("_void cierra por record_exit y marca a mercado (no inventa ganador)",
+          "record_exit" in void_src and "min(max(mark, 0.0), 1.0)" in void_src)
+
+    # --- BUG REAL (2026-07-28): spot() caia calladamente al ultimo precio
+    #     conocido sin decir de cuando era. Como el modelo divide por
+    #     sigma*sqrt(secs_left), a 10s del cierre un precio de hace un minuto da
+    #     un z enorme y una certeza FALSA cerca de 1.0. ---
+    from medusa.updown.feed import PriceFeed as _PF
+    spot_src = _insp.getsource(_PF.spot)
+    check("FIX: spot() descarta el precio rancio en vez de darlo como si fuese de ahora",
+          "_max_spot_age" in spot_src and "return None" in spot_src,
+          "un spot viejo no es un dato degradado: para este modelo es un dato falso")
+
+    # --- BUG REAL (2026-07-28): sigma se estimaba solo con los 60 ultimos
+    #     minutos, pero el trader entra en un PICO de volatilidad, donde esa
+    #     media esta muy por debajo del regimen real => z inflado => el bot cree
+    #     0.977 cuando la probabilidad real es 0.747, y apuesta. ---
+    sigma_src = _insp.getsource(_PF.sigma_sec)
+    check("FIX: sigma toma el maximo entre la ventana larga y la reciente",
+          "max(sd_long, sd_short)" in sigma_src,
+          "nunca mas confiado que el regimen reciente: fallar cuesta el 100% del stake")
+
+    # Y el numero que lo demuestra: con la sigma de la hora el modelo cruza
+    # min_prob=0.90 en un escenario donde la probabilidad real es ~0.75.
+    from medusa.updown.model import fair_prob_up as _fpu
+    _calm, _burst = 0.0006 / math.sqrt(60), 0.0018 / math.sqrt(60)
+    _p_calm = _fpu(100000.0, 100060.0, 15.0, _calm)
+    _p_burst = _fpu(100000.0, 100060.0, 15.0, _burst)
+    check("*** sigma vieja => falsa certeza: cruza min_prob=0.90 con P real ~0.75 ***",
+          _p_calm > 0.90 and _p_burst < 0.80,
+          f"P(sigma hora)={_p_calm:.3f} vs P(sigma pico)={_p_burst:.3f}")
 
     # --- los repos nuevos resuelven todos sus globales (sin NameError latente) ---
     import builtins as _bi
