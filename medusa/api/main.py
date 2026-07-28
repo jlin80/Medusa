@@ -33,6 +33,7 @@ from medusa.logging_setup import configure_logging
 from medusa.notifications.discord import DiscordNotifier
 from medusa.portfolio.metrics import compute_metrics, validation_report
 from medusa.strategies import StrategyManager, build_default_strategies
+from medusa.logging_setup import err
 
 settings = get_settings()
 log = configure_logging(settings.log_level, settings.log_dir, settings.log_json, service="api")
@@ -107,7 +108,7 @@ async def _engine_watchdog() -> None:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - el watchdog no debe morir nunca
-            log.warning("watchdog.check_failed", error=str(exc))
+            log.warning("watchdog.check_failed", error=err(exc))
 
 
 @asynccontextmanager
@@ -116,7 +117,7 @@ async def lifespan(app: FastAPI):
     try:
         await init_db()   # idempotente; la API puede arrancar antes que el engine
     except Exception as exc:  # noqa: BLE001
-        log.warning("api.init_db_failed", error=str(exc))
+        log.warning("api.init_db_failed", error=err(exc))
     watchdog = asyncio.create_task(_engine_watchdog())
     yield
     watchdog.cancel()
@@ -170,11 +171,11 @@ async def health() -> dict:
     try:
         db_ok = await check_db()
     except Exception as exc:  # noqa: BLE001
-        log.warning("health.db_fail", error=str(exc))
+        log.warning("health.db_fail", error=err(exc))
     try:
         redis_ok = bool(await check_redis())
     except Exception as exc:  # noqa: BLE001
-        log.warning("health.redis_fail", error=str(exc))
+        log.warning("health.redis_fail", error=err(exc))
     return {"status": "ok" if (db_ok and redis_ok) else "degraded",
             "db": db_ok, "redis": redis_ok}
 
@@ -566,7 +567,7 @@ async def ws_logs(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     except Exception as exc:  # noqa: BLE001
-        log.warning("ws.logs_error", error=str(exc))
+        log.warning("ws.logs_error", error=err(exc))
     finally:
         try:
             await pubsub.unsubscribe(events.CH_LOGS)

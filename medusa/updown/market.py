@@ -26,6 +26,7 @@ import httpx
 
 from medusa.config import get_settings
 from medusa.core.models import OrderBook
+from medusa.logging_setup import err
 
 _WINDOW_SECS = 300
 
@@ -93,7 +94,7 @@ class UpDownMarketFeed:
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:  # noqa: BLE001 - una ventana ilocalizable no rompe nada
-            self.log.warning("updown.event_fail", slug=slug, error=str(exc))
+            self.log.warning("updown.event_fail", slug=slug, error=err(exc))
             return None
         rows = data if isinstance(data, list) else data.get("data", [])
         return rows[0] if rows else None
@@ -155,5 +156,5 @@ class UpDownMarketFeed:
         try:
             return await self.client.fetch_order_book(token_id)
         except Exception as exc:  # noqa: BLE001
-            self.log.warning("updown.book_fail", token=token_id, error=str(exc))
+            self.log.warning("updown.book_fail", token=token_id, error=err(exc))
             return None

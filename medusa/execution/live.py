@@ -30,6 +30,7 @@ from medusa.config import get_settings
 from medusa.core.models import Fill, OrderRequest, OrderResult
 from medusa.data import repositories as repo
 from medusa.execution.base import ExecutionAdapter
+from medusa.logging_setup import err
 
 
 class LiveTradingBlocked(RuntimeError):
@@ -148,7 +149,7 @@ class LiveExecutionEngine(ExecutionAdapter):
         try:
             resp = await self._submit(order)
         except Exception as exc:  # noqa: BLE001
-            self.log.error("live.order_failed", market=order.market_id, error=str(exc))
+            self.log.error("live.order_failed", market=order.market_id, error=err(exc))
             return OrderResult(0.0, 0.0, [], "rejected", f"error del CLOB: {exc}")
 
         return self._parse_response(resp, order, book.mid)
@@ -218,7 +219,7 @@ class LiveExecutionEngine(ExecutionAdapter):
             await asyncio.to_thread(clob.cancel, order_id)
             return True
         except Exception as exc:  # noqa: BLE001
-            self.log.warning("live.cancel_failed", order_id=order_id, error=str(exc))
+            self.log.warning("live.cancel_failed", order_id=order_id, error=err(exc))
             return False
 
     async def get_fills(self, order_id: str) -> list:
@@ -228,7 +229,7 @@ class LiveExecutionEngine(ExecutionAdapter):
         try:
             return await asyncio.to_thread(clob.get_trades, TradeParams(id=order_id)) or []
         except Exception as exc:  # noqa: BLE001
-            self.log.warning("live.get_fills_failed", order_id=order_id, error=str(exc))
+            self.log.warning("live.get_fills_failed", order_id=order_id, error=err(exc))
             return []
 
 

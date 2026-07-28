@@ -27,6 +27,7 @@ from __future__ import annotations
 from medusa.config import get_settings
 from medusa.core.models import Market, MarketContext
 from medusa.strategies.base import Strategy, StrategySignal
+from medusa.logging_setup import err
 from medusa.strategies.phases import (
     DEFAULT_PHASE,
     Phase,
@@ -128,7 +129,7 @@ class StrategyManager:
                 sig = st.evaluate(m, ctx)
             except Exception as exc:  # noqa: BLE001
                 self.log.warning("strategy.failed", strategy=st.name,
-                                 market=m.id, error=str(exc))
+                                 market=m.id, error=err(exc))
                 continue
             if sig is not None:
                 signals.append(sig)

@@ -26,6 +26,7 @@ from medusa.data import repositories as repo
 from medusa.data.polymarket.client import PolymarketClient
 from medusa.intelligence import MarketClassifier, OpportunityPreScorer
 from medusa.intelligence.prescorer import ScoredMarket
+from medusa.logging_setup import err
 
 # El cache de historicos no debe crecer sin techo si el ranking rota mucho.
 _HISTORY_CACHE_MAX = 200
@@ -93,14 +94,14 @@ class MarketScanner:
                     m.yes_price = round(book.mid, 4)
                     m.no_price = round(1 - m.yes_price, 4)
             except Exception as exc:  # noqa: BLE001 - un libro caido no rompe el ciclo
-                self.log.warning("scan.book_fail", market=m.id, error=str(exc))
+                self.log.warning("scan.book_fail", market=m.id, error=err(exc))
                 continue   # sin libro YES no hay analisis profundo que valga
 
             if need_book_no and m.no_token_id:
                 try:
                     ctx.book_no = await self.client.fetch_order_book(m.no_token_id)
                 except Exception as exc:  # noqa: BLE001
-                    self.log.warning("scan.book_no_fail", market=m.id, error=str(exc))
+                    self.log.warning("scan.book_no_fail", market=m.id, error=err(exc))
 
             if need_history:
                 ctx.history = await self._history(m.yes_token_id)
@@ -117,7 +118,7 @@ class MarketScanner:
         try:
             history = await self.client.fetch_price_history(token_id)
         except Exception as exc:  # noqa: BLE001
-            self.log.warning("scan.history_fail", token=token_id, error=str(exc))
+            self.log.warning("scan.history_fail", token=token_id, error=err(exc))
             return cached[1] if cached else []
         if len(self._history_cache) >= _HISTORY_CACHE_MAX:
             oldest = min(self._history_cache, key=lambda k: self._history_cache[k][0])

@@ -15,6 +15,7 @@ import time
 import httpx
 
 from medusa.config import get_settings
+from medusa.logging_setup import err
 
 # Colores de los embeds.
 _GREEN = 0x2ECC71
@@ -71,7 +72,7 @@ class DiscordNotifier:
             if resp.status_code >= 400:
                 self._warn("discord.rejected", status=resp.status_code, body=resp.text[:200])
         except Exception as exc:  # noqa: BLE001 - notificar nunca puede romper el engine
-            self._warn("discord.send_failed", error=str(exc))
+            self._warn("discord.send_failed", error=err(exc))
 
     def _warn(self, event: str, **kw) -> None:
         if self.log is not None:

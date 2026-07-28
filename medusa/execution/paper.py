@@ -15,6 +15,7 @@ from medusa.config import get_settings
 from medusa.core.models import Fill, OrderBook, OrderRequest, OrderResult
 from medusa.data import repositories as repo
 from medusa.execution.base import ExecutionAdapter
+from medusa.logging_setup import err
 
 # Rango de precios valido en Polymarket (tick 0.001).
 _MIN_PRICE = 0.001
@@ -132,7 +133,7 @@ class PaperExecutionEngine(ExecutionAdapter):
         try:
             book = await self.client.fetch_order_book(order.token_id)
         except Exception as exc:  # noqa: BLE001 - un fallo de API no tumba el engine
-            self.log.warning("paper.book_fail", token=order.token_id, error=str(exc))
+            self.log.warning("paper.book_fail", token=order.token_id, error=err(exc))
             return OrderResult(0.0, 0.0, [], "rejected", f"order book no disponible: {exc}")
 
         result = self._simulate(book, order)

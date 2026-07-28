@@ -24,6 +24,7 @@ from medusa.config import get_settings
 from medusa.core.enums import LogType
 from medusa.data import repositories as repo
 from medusa.intelligence_layer.base import IntelligenceModule
+from medusa.logging_setup import err
 
 
 def _csv(value: str) -> set[str]:
@@ -93,7 +94,7 @@ class IntelligenceRunner:
                 stats["errors"] += 1
                 stats["last_error"] = str(exc)[:200]
                 self.log.warning("intel.module_failed", module=module.name,
-                                 error=str(exc), exc_info=True)
+                                 error=err(exc), exc_info=True)
                 continue
 
             stats["last_ms"] = round((time.perf_counter() - started) * 1000, 1)
@@ -108,7 +109,7 @@ class IntelligenceRunner:
             except Exception as exc:  # noqa: BLE001
                 stats["errors"] += 1
                 stats["last_error"] = f"no se pudo guardar: {str(exc)[:150]}"
-                self.log.warning("intel.save_failed", module=module.name, error=str(exc))
+                self.log.warning("intel.save_failed", module=module.name, error=err(exc))
 
         if written and self.publish_log is not None:
             try:

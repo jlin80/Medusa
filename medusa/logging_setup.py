@@ -12,6 +12,21 @@ import sys
 import structlog
 
 
+def err(exc: BaseException) -> str:
+    """Describe una excepcion para un log, SIEMPRE con algo dentro.
+
+    `str(exc)` a secas devuelve cadena VACIA en las excepciones que se lanzan sin
+    mensaje, que son justo las mas comunes en la capa de red: httpx.ReadTimeout,
+    httpx.ConnectError, asyncio.CancelledError... El resultado eran lineas como
+    `{"event": "scan.history_fail", "error": ""}`: el log avisa de que algo
+    fallo pero no dice QUE, que es la mitad inutil de una alerta. Se antepone
+    siempre el tipo, que nunca esta vacio.
+    """
+    name = type(exc).__name__
+    msg = str(exc).strip()
+    return f"{name}: {msg}" if msg else name
+
+
 def configure_logging(
     level: str = "INFO",
     log_dir: str = "/app/logs",

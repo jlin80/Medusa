@@ -46,6 +46,7 @@ from medusa.scanner.scanner import MarketScanner
 from medusa.strategies import StrategyManager, StrategySignal, build_default_strategies
 from medusa.trading import TradingEngine
 from medusa.updown import build_updown_trader
+from medusa.logging_setup import err
 
 
 class Engine:
@@ -97,7 +98,7 @@ class Engine:
                 self.log.info("infra.connected", service=name)
                 return
             except Exception as exc:  # noqa: BLE001 - reintentar ante cualquier fallo
-                self.log.warning("infra.waiting", service=name, attempt=attempt, error=str(exc))
+                self.log.warning("infra.waiting", service=name, attempt=attempt, error=err(exc))
                 await asyncio.sleep(delay)
         raise RuntimeError(f"No se pudo conectar a {name} tras {retries} intentos")
 
@@ -182,7 +183,7 @@ class Engine:
             self._universe = await self.scanner.scan_universe()
             self._universe_at = now
         except Exception as exc:  # noqa: BLE001
-            self.log.error("engine.universe_scan_failed", error=str(exc))
+            self.log.error("engine.universe_scan_failed", error=err(exc))
             await events.publish_log(LogType.ERROR, f"Fallo el escaneo global: {exc}")
             await self.notifier.api_failure("Polymarket Gamma API", str(exc))
         return self._universe
@@ -222,7 +223,7 @@ class Engine:
         try:
             features = await repo.latest_features([m.id for m, _ in enriched])
         except Exception as exc:  # noqa: BLE001
-            self.log.warning("intel.features_read_failed", error=str(exc))
+            self.log.warning("intel.features_read_failed", error=err(exc))
             return
         for market, ctx in enriched:
             ctx.features = features.get(market.id, {})
@@ -401,7 +402,7 @@ class Engine:
                 # Hay datos nuevos: los pesos deben verlos ya, no en una hora.
                 await self.allocator.refresh(force=True)
         except Exception as exc:  # noqa: BLE001 - la resolucion no tumba el ciclo
-            self.log.warning("signals.resolve_failed", error=str(exc))
+            self.log.warning("signals.resolve_failed", error=err(exc))
 
     async def _roll_day(self, equity: float) -> float:
         """Abre el dia UTC si toca y devuelve la equity de referencia del dia.
@@ -477,7 +478,7 @@ class Engine:
             try:
                 await self._cycle()
             except Exception as exc:  # noqa: BLE001 - un ciclo malo no mata el bot
-                self.log.error("engine.cycle_failed", error=str(exc), exc_info=True)
+                self.log.error("engine.cycle_failed", error=err(exc), exc_info=True)
                 await events.publish_log(LogType.ERROR, f"Fallo en el ciclo: {exc}")
                 await self.notifier.error("Fallo en el ciclo de trading", str(exc))
             await self._sleep(self.settings.scan_interval)
@@ -507,7 +508,7 @@ class Engine:
                 # de seguridad del loop entero.
                 await self.intel.run_once(self._deep_markets, self._deep_ctx)
             except Exception as exc:  # noqa: BLE001 - el layer jamas tumba el engine
-                self.log.error("intel.loop_failed", error=str(exc), exc_info=True)
+                self.log.error("intel.loop_failed", error=err(exc), exc_info=True)
 
     async def _updown_loop(self) -> None:
         """Loop del micro-trader 'Up or Down', INDEPENDIENTE del ciclo de trading.
@@ -531,12 +532,12 @@ class Engine:
                 f"{', '.join(active) or 'sin mercados activos (toggles apagados)'}",
             )
         except Exception as exc:  # noqa: BLE001 - un fallo aqui no impide operar
-            self.log.warning("updown.startup_log_failed", error=str(exc))
+            self.log.warning("updown.startup_log_failed", error=err(exc))
         while not self._stop.is_set():
             try:
                 await self.updown.tick()
             except Exception as exc:  # noqa: BLE001 - el micro-trader jamas tumba el engine
-                self.log.error("updown.loop_failed", error=str(exc), exc_info=True)
+                self.log.error("updown.loop_failed", error=err(exc), exc_info=True)
             await self._sleep(self.settings.updown_tick_interval)
 
     async def _maintenance_loop(self) -> None:
@@ -557,7 +558,7 @@ class Engine:
                 if pruned:
                     self.log.info("engine.pruned_features", features=pruned)
             except Exception as exc:  # noqa: BLE001
-                self.log.warning("engine.prune_failed", error=str(exc))
+                self.log.warning("engine.prune_failed", error=err(exc))
 
     async def _sleep(self, seconds: float) -> None:
         """Espera interrumpible: reacciona al stop sin agotar el intervalo."""
@@ -580,7 +581,7 @@ class Engine:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - un loop no puede tumbar el engine
-            self.log.error("engine.loop_crashed", loop=name, error=str(exc), exc_info=True)
+            self.log.error("engine.loop_crashed", loop=name, error=err(exc), exc_info=True)
             try:
                 await events.publish_log(LogType.ERROR, f"Loop '{name}' murio: {exc}")
                 await self.notifier.error(f"Loop '{name}' murio", str(exc))
@@ -606,12 +607,12 @@ class Engine:
             await events.publish_log(LogType.SYSTEM, "Medusa detenido")
             await self.notifier.shutdown()
         except Exception as exc:  # noqa: BLE001
-            self.log.warning("engine.shutdown_publish_failed", error=str(exc))
+            self.log.warning("engine.shutdown_publish_failed", error=err(exc))
         await self.notifier.close()
         try:
             await self.updown.close()
         except Exception as exc:  # noqa: BLE001
-            self.log.warning("updown.close_failed", error=str(exc))
+            self.log.warning("updown.close_failed", error=err(exc))
         await self.client.close()
         await close()
         await dispose()
@@ -639,7 +640,7 @@ async def main() -> None:
     try:
         await engine.run()
     except Exception as exc:  # noqa: BLE001
-        log.error("engine.fatal", error=str(exc), exc_info=True)
+        log.error("engine.fatal", error=err(exc), exc_info=True)
         raise
 
 

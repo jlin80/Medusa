@@ -37,6 +37,7 @@ from medusa.updown.feed import PriceFeed
 from medusa.updown.market import UpDownMarketFeed, UpDownWindow, slug_for, window_start_for
 from medusa.updown.model import EntryPolicy, assess, fair_prob_up, favored_side
 from medusa.updown.risk import UpDownRiskManager
+from medusa.logging_setup import err
 
 # Par spot de Binance por activo: el proxy de direccion del stream Chainlink con
 # el que Polymarket resuelve estas ventanas.
@@ -103,7 +104,7 @@ class UpDownTrader:
         try:
             assets = await repo.get_updown_assets(self.s.updown_assets)
         except Exception as exc:  # noqa: BLE001 - si la BD falla, usa el default
-            self.log.warning("updown.assets_read_fail", error=str(exc))
+            self.log.warning("updown.assets_read_fail", error=err(exc))
             assets = [a.strip().lower() for a in self.s.updown_assets.split(",") if a.strip()]
         assets = [a for a in assets if a in _SYMBOLS]
         self._assets_cache, self._assets_at = assets, now
@@ -128,7 +129,7 @@ class UpDownTrader:
         try:
             await self._settle_open()
         except Exception as exc:  # noqa: BLE001
-            self.log.warning("updown.settle_loop_fail", error=str(exc))
+            self.log.warning("updown.settle_loop_fail", error=err(exc))
 
         # 2) ENTRADAS nuevas: solo si el kill-switch no esta puesto.
         try:
@@ -140,7 +141,7 @@ class UpDownTrader:
             try:
                 await self._maybe_enter(asset)
             except Exception as exc:  # noqa: BLE001 - un activo no bloquea a los demas
-                self.log.warning("updown.enter_fail", asset=asset, error=str(exc))
+                self.log.warning("updown.enter_fail", asset=asset, error=err(exc))
 
     # =====================================================================
     #  liquidacion (settler unico de las posiciones updown)
@@ -159,7 +160,7 @@ class UpDownTrader:
             try:
                 await self._settle_one(pos)
             except Exception as exc:  # noqa: BLE001 - una posicion no bloquea a las demas
-                self.log.warning("updown.settle_one_fail", position=pos.get("id"), error=str(exc))
+                self.log.warning("updown.settle_one_fail", position=pos.get("id"), error=err(exc))
 
     def _age_secs(self, pos: dict) -> float:
         """Segundos desde que se abrio la posicion (0 si la fecha no es usable)."""
@@ -339,7 +340,7 @@ class UpDownTrader:
         try:
             snap = await repo.updown_risk_data()
         except Exception as exc:  # noqa: BLE001 - sin la foto no se arriesga
-            self.log.warning("updown.risk_data_fail", error=str(exc))
+            self.log.warning("updown.risk_data_fail", error=err(exc))
             return
         verdict = self.risk.assess(snap, time.time())
         if not verdict.allow:
@@ -447,7 +448,7 @@ class UpDownTrader:
         try:
             opp_id = await repo.save_opportunity(opp, status="executed")
         except Exception as exc:  # noqa: BLE001 - telemetria, no bloquea la entrada
-            self.log.warning("updown.opp_save_fail", error=str(exc))
+            self.log.warning("updown.opp_save_fail", error=err(exc))
             opp_id = None
 
         # Entrada en el ledger REAL de paper: posicion + balance, atomico.

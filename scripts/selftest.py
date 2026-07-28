@@ -846,6 +846,31 @@ def test_updown() -> None:
           "real_ev = decision.fair_prob - unit_cost" in open_src,
           "el min_ev debe medirse contra lo que de verdad sale de la caja")
 
+    # --- BUG REAL (2026-07-28): los logs de excepcion usaban str(exc), que es
+    #     CADENA VACIA en las excepciones lanzadas sin mensaje -- justo las mas
+    #     comunes en la capa de red. En produccion salian lineas como
+    #     {"event": "scan.history_fail", "error": ""}: avisan de que algo fallo
+    #     pero no de que, que es la mitad inutil de una alerta. ---
+    import httpx as _httpx
+
+    from medusa.logging_setup import err as _err
+    for _exc in (_httpx.ReadTimeout(""), _httpx.ConnectError(""), asyncio.CancelledError()):
+        check(f"err() describe {type(_exc).__name__} aunque str(exc) sea vacio",
+              _err(_exc) == type(_exc).__name__ and _err(_exc) != "",
+              f"str={str(_exc)!r} -> err={_err(_exc)!r}")
+    check("err() conserva el mensaje cuando lo hay",
+          _err(ValueError("algo concreto")) == "ValueError: algo concreto")
+
+    import pathlib as _pl
+    _src_root = _pl.Path(__file__).resolve().parent.parent / "medusa"
+    _restantes = sorted(
+        f"{p.relative_to(_src_root)}"
+        for p in _src_root.rglob("*.py")
+        if "error=str(exc)" in p.read_text(encoding="utf-8")
+    )
+    check("ningun log de excepcion usa ya error=str(exc) (perderia el tipo)",
+          not _restantes, f"quedan en: {', '.join(_restantes)}")
+
     # --- integracion con el ledger real: manage_positions IGNORA las posiciones
     #     updown (las gestiona su propio loop, que es el unico settler) ---
     import inspect as _insp

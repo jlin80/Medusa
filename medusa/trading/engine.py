@@ -18,6 +18,7 @@ from medusa.core.enums import LogType
 from medusa.core.models import OrderRequest
 from medusa.data import repositories as repo
 from medusa.risk.manager import TradeInstruction
+from medusa.logging_setup import err
 
 
 class TradingEngine:
@@ -76,7 +77,7 @@ class TradingEngine:
                 try:
                     await repo.mark_signal_traded(ins.strategy, ins.market_id, ins.outcome)
                 except Exception as exc:  # noqa: BLE001 - telemetria, nunca bloquea
-                    self.log.warning("trading.mark_signal_fail", error=str(exc))
+                    self.log.warning("trading.mark_signal_fail", error=err(exc))
 
             tag = f" [{ins.strategy}]" if ins.strategy else ""
             msg = (
@@ -104,7 +105,7 @@ class TradingEngine:
             try:
                 await self._manage_one(pos, adapter)
             except Exception as exc:  # noqa: BLE001 - una posicion no rompe el ciclo
-                self.log.warning("trading.manage_fail", position=pos["id"], error=str(exc))
+                self.log.warning("trading.manage_fail", position=pos["id"], error=err(exc))
 
     async def _manage_one(self, pos: dict, adapter) -> None:
         # Las apuestas del micro-trader Up/Down (medusa.updown) las gestiona SU
