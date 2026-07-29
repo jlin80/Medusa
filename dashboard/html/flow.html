@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Medusa · Information Flow</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#121820; --panel-2:#171f2a; --line:#243040;
+      --txt:#e6edf3; --muted:#8b9bb0; --accent:#2ec4b6; --accent-2:#3498db;
+      --green:#2ecc71; --red:#e74c3c; --orange:#e67e22; --purple:#9b59b6;
+      --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--txt);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:16px}
+    a{color:var(--accent);text-decoration:none}
+    a:hover{text-decoration:underline}
+    .wrap{max-width:1500px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+
+    .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+      background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+    .brand{font-size:19px;font-weight:700;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+    .brand small{color:var(--muted);font-weight:400;font-size:12px;letter-spacing:0}
+    .spacer{flex:1}
+    .chip{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
+      padding:5px 12px;font-size:12px;color:var(--muted);white-space:nowrap}
+    .chip b{color:var(--txt)}
+
+    button,select{background:var(--panel-2);color:var(--txt);border:1px solid var(--line);
+      border-radius:8px;padding:7px 13px;cursor:pointer;font-size:13px;transition:.15s}
+    button:hover,select:hover{border-color:var(--accent)}
+    button:disabled{opacity:.4;cursor:not-allowed}
+
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+    .card .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+    .card .v{font-size:21px;font-weight:700;margin-top:4px;font-family:var(--mono)}
+
+    *{scrollbar-width:thin;scrollbar-color:#2b3646 transparent}
+    ::-webkit-scrollbar{width:9px;height:9px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#2b3646;border-radius:999px;
+      border:2px solid transparent;background-clip:padding-box}
+
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    @media(max-width:1100px){.grid{grid-template-columns:1fr}}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+      display:flex;flex-direction:column}
+    .phead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);
+      background:var(--panel-2);flex-wrap:wrap}
+    .phead h2{font-size:13px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--muted)}
+    .pbody{padding:12px 14px;overflow:auto;max-height:420px}
+
+    table{width:100%;border-collapse:collapse;font-size:12.5px}
+    th{text-align:left;color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;
+      padding:6px 8px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+    td{padding:6px 8px;border-bottom:1px solid #1b2430;font-family:var(--mono);font-size:12px;vertical-align:middle}
+    tr:last-child td{border-bottom:none}
+    .empty{color:var(--muted);text-align:center;padding:24px;font-size:13px}
+
+    .banner{border-radius:8px;padding:9px 12px;font-size:12.5px;margin-bottom:11px;line-height:1.45}
+    .banner.lock{background:#12211f;border:1px solid #1e4d46;color:#8fe3d8}
+    .banner.warn{background:#241a10;border:1px solid #5b452b;color:#ffce9c}
+    .banner.err{background:#241414;border:1px solid #5b2b2b;color:#ff9c9c}
+    .note{color:#8b9bb0;font-size:11.5px;margin-top:10px;line-height:1.6}
+    .foot{color:#4a5a6e;font-size:11px;text-align:center;padding:4px 0 10px}
+
+    /* aviso epistemico: es la pieza mas importante de la pagina */
+    .epistemic{background:#1a1424;border:1px solid #43305e;color:#d9c7f0;
+      border-radius:10px;padding:11px 14px;font-size:12.5px;line-height:1.6}
+    .epistemic b{color:#f0e6ff}
+
+    /* cadena de propagacion */
+    .chain{display:flex;flex-direction:column;gap:0;font-family:var(--mono);font-size:12px}
+    .hopnode{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;
+      background:var(--panel-2);border:1px solid var(--line)}
+    .hopnode .idx{width:22px;height:22px;border-radius:999px;display:grid;place-items:center;
+      font-size:10.5px;color:#0b0f14;font-weight:700;flex:none}
+    .hopnode .w{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .hopnode .px{color:var(--muted)}
+    .hoparrow{display:flex;align-items:center;gap:8px;padding:2px 0 2px 19px;color:var(--muted);font-size:11px}
+    .hoparrow .bar{height:14px;border-left:2px dotted #3a4a5e;width:0}
+    .terminal{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;
+      border:1px dashed var(--line);color:var(--muted)}
+
+    /* barras */
+    .barrow{display:flex;align-items:center;gap:9px;padding:4px 0}
+    .barrow .nm{width:120px;font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+    .barrow .track{flex:1;height:9px;background:#1b2430;border-radius:999px;overflow:hidden}
+    .barrow .track>div{height:100%;border-radius:999px;transition:width .4s}
+    .barrow .n{width:64px;text-align:right;font-family:var(--mono);font-size:12px}
+
+    /* medidor de liderazgo: el 0.5 es el azar y se dibuja */
+    .gauge{position:relative;height:9px;background:#1b2430;border-radius:999px;min-width:90px}
+    .gauge>.fill{position:absolute;top:0;bottom:0;border-radius:999px}
+    .gauge>.chance{position:absolute;top:-3px;bottom:-3px;left:50%;width:1px;background:#5b6b80}
+    .weak{color:#5b6b80}
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">🌊 INFORMATION FLOW <small>propagación de información en Polymarket</small></div>
+    <span class="chip" id="engstate">—</span>
+    <div class="spacer"></div>
+    <a href="/research.html"><button>← Research Lab</button></a>
+    <a href="/wallets.html"><button>👛 Wallets</button></a>
+    <a href="/index.html"><button>Panel</button></a>
+    <button id="runbtn">Ejecutar pasada</button>
+  </div>
+
+  <div id="alert"></div>
+
+  <div class="epistemic">
+    <b>Esto mide propagación, no causalidad.</b> Que una wallet entre después de otra
+    significa exactamente eso: que entró después. No significa que la siga, ni que la
+    primera moviera el precio, ni que ninguna tenga información privada — no hay
+    contrafactual, no hay asignación aleatoria y no hay control de confusores (un anuncio
+    público hace entrar a veinte wallets a la vez sin que ninguna sepa de las otras).
+    El único contraste legítimo, y el que se dibuja como línea gris en cada medidor, es
+    contra el <b>azar</b>: si el orden de entrada fuese intercambiable, el rango normalizado
+    esperado de cualquier participante sería <b>0.5</b>.
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <!-- LA CADENA: wallet A -> B -> C -> precio -> resolucion -->
+  <div class="panel">
+    <div class="phead"><h2>Cadena de propagación</h2>
+      <span class="chip" id="cascmeta">—</span>
+      <div class="spacer"></div>
+      <select id="cascpick"><option>cargando…</option></select></div>
+    <div class="pbody" id="chainbox" style="max-height:none"><div class="empty">cargando…</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="phead"><h2>Latencia líder → seguidor</h2><div class="spacer"></div>
+        <span class="chip" id="lagtot">—</span></div>
+      <div class="pbody" id="lagbox" style="max-height:none"><div class="empty">cargando…</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="phead"><h2>Actividad del motor</h2><div class="spacer"></div>
+        <span class="chip" id="tlrange">—</span></div>
+      <div class="pbody" style="max-height:none">
+        <svg id="tlchart" viewBox="0 0 600 170" preserveAspectRatio="none"
+             style="width:100%;height:170px"></svg>
+        <div class="note">
+          <span style="color:var(--accent)">■</span> cascadas ·
+          <span style="color:var(--accent-2)">■</span> eventos de propagación —
+          una muestra por pasada.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- wallets -->
+  <div class="panel">
+    <div class="phead"><h2>Wallets en el flujo</h2>
+      <div class="spacer"></div>
+      <select id="orderpick">
+        <option value="leadership">orden: liderazgo (cota inferior)</option>
+        <option value="speed">orden: velocidad</option>
+        <option value="follow">orden: seguimiento</option>
+        <option value="early">orden: información temprana</option>
+        <option value="edge">orden: temprano − tardío</option>
+        <option value="cascades">orden: nº de cascadas</option>
+      </select>
+      <label class="chip"><input type="checkbox" id="allwallets" /> incluir muestra insuficiente</label>
+    </div>
+    <div class="pbody" id="walletbox"><div class="empty">cargando…</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="phead"><h2>Mercados: velocidad del consenso</h2></div>
+      <div class="pbody" id="marketbox"><div class="empty">cargando…</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="phead"><h2>Pares que coinciden en ese orden</h2></div>
+      <div class="pbody" id="pairbox"><div class="empty">cargando…</div></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    El Information Flow Engine mide propagación. No opera, no emite señales y no toca el Risk Manager.
+  </div>
+</div>
+
+<script>
+const API = '/api';
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hhmm = ts => { try { return new Date(ts).toLocaleString('es-ES',{hour12:false}); } catch { return '—'; } };
+const shortw = w => String(w||'').length > 12 ? String(w).slice(0,6)+'…'+String(w).slice(-4) : String(w||'');
+const num = (v, d=2) => (v == null ? '—' : Number(v).toFixed(d));
+
+// Segundos -> forma legible. Las latencias van de 2 s a varias horas y una
+// columna en segundos crudos es ilegible justo en las dos puntas.
+function dur(s) {
+  s = Number(s || 0);
+  if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + 's';
+  if (s < 3600) return (s/60).toFixed(1) + 'm';
+  return (s/3600).toFixed(1) + 'h';
+}
+
+async function api(path, opts) {
+  const r = await fetch(API + path, opts);
+  if (!r.ok) {
+    let detail = r.statusText;
+    try { detail = (await r.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return r.json();
+}
+
+function banner(kind, html) { $('alert').innerHTML = `<div class="banner ${kind}">${html}</div>`; }
+
+async function loadInfo() {
+  try {
+    const info = await api('/flow/info');
+    $('engstate').innerHTML = info.enabled
+      ? '<span style="color:var(--green)">■</span> análisis automático activo'
+      : '<span style="color:var(--orange)">■</span> automático apagado (FLOW_ENABLED=false)';
+    if (!info.enabled) {
+      banner('lock', '🔒 <b>El Information Flow Engine está apagado en el .env</b> ' +
+        '(FLOW_ENABLED=false): no se analiza solo. Puedes lanzar una pasada a mano con ' +
+        '«Ejecutar pasada» — lee la cinta pública de Polymarket y solo escribe en las ' +
+        'tablas del motor.');
+    }
+  } catch (e) {
+    $('engstate').textContent = 'API no disponible';
+    banner('err', 'No se pudo hablar con la API: ' + esc(e.message));
+  }
+}
+
+async function loadStats() {
+  let st;
+  try { st = await api('/flow/stats'); } catch { return; }
+  const cards = [
+    ['Cascadas', (st.cascades||0).toLocaleString('es-ES')],
+    ['Eventos de propagación', (st.events||0).toLocaleString('es-ES')],
+    ['Wallets observadas', (st.wallets||0).toLocaleString('es-ES')],
+    ['Con muestra suficiente', (st.wallets_with_evidence||0).toLocaleString('es-ES')],
+    ['Mercados', (st.markets||0).toLocaleString('es-ES')],
+    ['Cascadas resueltas', (st.resolved_cascades||0).toLocaleString('es-ES')],
+    ['Propagación media', dur(st.avg_propagation_time)],
+    ['Consenso medio', dur(st.avg_consensus_delay)],
+    ['Latencia media', dur(st.avg_lag)],
+    ['Tamaño medio', num(st.avg_cascade_size, 1)],
+  ];
+  $('cards').innerHTML = cards.map(([k,v]) =>
+    `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+}
+
+// ---------------------------------------------------------------- cadena --
+let CASCADES = [];
+
+async function loadCascades() {
+  try { CASCADES = await api('/flow/cascades?limit=40'); } catch { return; }
+  const pick = $('cascpick');
+  if (!CASCADES.length) {
+    pick.innerHTML = '<option>sin cascadas</option>';
+    $('chainbox').innerHTML = '<div class="empty">todavía no se ha detectado ninguna cascada ' +
+      '(hacen falta al menos 3 wallets entrando seguidas en el mismo lado)</div>';
+    return;
+  }
+  pick.innerHTML = CASCADES.map((c,i) =>
+    `<option value="${i}">${esc(c.side)} · ${c.n_participants} wallets · ${hhmm(c.started_at)}</option>`
+  ).join('');
+  drawChain(0);
+}
+
+async function drawChain(idx) {
+  const c = CASCADES[idx];
+  if (!c) return;
+  $('cascmeta').innerHTML =
+    `<b>${c.n_participants}</b> wallets · consenso <b>${dur(c.consensus_delay)}</b> · ` +
+    `propagación <b>${dur(c.propagation_time)}</b>`;
+
+  let events = [];
+  try { events = await api('/flow/events?cascade_key=' + encodeURIComponent(c.cascade_key) + '&max_hop=1&limit=200'); }
+  catch {}
+  // Los eslabones de salto 1 dan la latencia entre entradas consecutivas.
+  const lagOf = {};
+  events.forEach(e => { lagOf[e.follower] = e.lag_seconds; });
+
+  const parts = c.participants || [];
+  const colorAt = i => parts.length < 2 ? '#2ec4b6'
+    : `hsl(${170 - (i/(parts.length-1))*150}, 55%, 55%)`;
+
+  let html = '<div class="chain">';
+  parts.forEach((w, i) => {
+    html += `<div class="hopnode">
+      <span class="idx" style="background:${colorAt(i)}">${i+1}</span>
+      <span class="w" title="${esc(w)}">${esc(shortw(w))}</span>
+      <span class="px">rango ${(parts.length<2?0.5:i/(parts.length-1)).toFixed(2)}</span>
+    </div>`;
+    if (i < parts.length - 1) {
+      const lag = lagOf[parts[i+1]];
+      html += `<div class="hoparrow"><span class="bar"></span>↓ ${lag != null ? dur(lag) : '—'} después</div>`;
+    }
+  });
+  // Los dos eslabones finales de la cadena: el precio y la resolución.
+  const move = c.price_move || 0;
+  const moveColor = move > 0 ? 'var(--green)' : (move < 0 ? 'var(--red)' : 'var(--muted)');
+  html += `<div class="hoparrow"><span class="bar"></span>↓</div>
+    <div class="terminal">📈 el precio del lado pasó de <b style="color:var(--txt)">
+      ${num(c.price_start,3)}</b> a <b style="color:var(--txt)">${num(c.price_end,3)}</b>
+      (<span style="color:${moveColor}">${move>0?'+':''}${num(move,3)}</span>)</div>
+    <div class="hoparrow"><span class="bar"></span>↓</div>`;
+  html += c.resolved
+    ? `<div class="terminal">🏁 el mercado resolvió: el lado <b style="color:${
+        c.resolution_value >= 0.5 ? 'var(--green)' : 'var(--red)'}">
+        ${c.resolution_value >= 0.5 ? 'acertó' : 'falló'}</b></div>`
+    : `<div class="terminal">🏁 el mercado sigue vivo — <span class="weak">sin resultado; no se
+        inventa ninguno</span></div>`;
+  html += '</div>';
+  html += `<div class="note">La cadena describe <b>orden de entrada</b>. El paso al precio y
+    a la resolución es <b>lo que ocurrió después</b>, no un efecto atribuido a nadie: las
+    entradas pueden ser todas consecuencia de la misma noticia pública.</div>`;
+  $('chainbox').innerHTML = html;
+}
+
+$('cascpick').onchange = e => drawChain(Number(e.target.value));
+
+// ------------------------------------------------------------ histograma --
+async function loadLag() {
+  let hs;
+  try { hs = await api('/flow/lag-histogram?buckets=12&max_seconds=3600'); } catch { return; }
+  if (!hs.length) { $('lagbox').innerHTML = '<div class="empty">sin eventos todavía</div>'; return; }
+  const max = Math.max(...hs.map(h => h.n)) || 1;
+  const total = hs.reduce((s,h) => s+h.n, 0);
+  $('lagtot').innerHTML = `<b>${total.toLocaleString('es-ES')}</b> eslabones`;
+  $('lagbox').innerHTML = hs.map(h => `
+    <div class="barrow">
+      <span class="nm">${dur(h.from)}–${dur(h.to)}</span>
+      <span class="track"><div style="width:${(h.n/max*100).toFixed(1)}%;background:var(--accent-2)"></div></span>
+      <span class="n">${h.n.toLocaleString('es-ES')}</span>
+    </div>`).join('') +
+    '<div class="note">Cuánto tarda en entrar el siguiente después de cada wallet. ' +
+    'El último tramo acumula la cola: una latencia enorme es información sobre la ' +
+    'distribución, y borrarla haría parecer que se acaba donde acaba el gráfico.</div>';
+}
+
+// -------------------------------------------------------------- timeline --
+async function loadTimeline() {
+  let pts;
+  try { pts = await api('/flow/timeline?limit=200'); } catch { return; }
+  const svg = $('tlchart');
+  if (!pts || pts.length < 2) {
+    svg.innerHTML = '<text x="300" y="90" fill="#8b9bb0" font-size="12" text-anchor="middle">' +
+      'hacen falta al menos dos pasadas para dibujar la curva</text>';
+    $('tlrange').textContent = (pts && pts.length ? pts.length : 0) + ' pasadas';
+    return;
+  }
+  const hi = Math.max(...pts.map(p => Math.max(p.cascades, p.events))) || 1;
+  const x = i => (i / (pts.length - 1)) * 600;
+  const y = v => 168 - (v / hi) * 162;
+  const path = key => pts.map((p,i) => `${i?'L':'M'}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join(' ');
+  svg.innerHTML =
+    `<path d="${path('cascades')}" fill="none" stroke="#2ec4b6" stroke-width="1.8" vector-effect="non-scaling-stroke"/>
+     <path d="${path('events')}" fill="none" stroke="#3498db" stroke-width="1.8" vector-effect="non-scaling-stroke"/>`;
+  $('tlrange').textContent =
+    `${pts.length} pasadas · ${hhmm(pts[0].ts)} → ${hhmm(pts[pts.length-1].ts)}`;
+}
+
+// --------------------------------------------------------------- wallets --
+function gauge(value, lower, color) {
+  // La barra sólida es la cota inferior (lo que la muestra sostiene) y la
+  // translúcida el valor puntual: la diferencia entre las dos ES la
+  // incertidumbre, y merece verse.
+  const v = Math.max(0, Math.min(1, value || 0)), lo = Math.max(0, Math.min(1, lower || 0));
+  return `<div class="gauge">
+    <div class="fill" style="left:0;width:${(v*100).toFixed(1)}%;background:${color};opacity:.28"></div>
+    <div class="fill" style="left:0;width:${(lo*100).toFixed(1)}%;background:${color}"></div>
+    <div class="chance" title="0.5 = lo esperado por azar"></div></div>`;
+}
+
+async function loadWallets() {
+  const order = $('orderpick').value;
+  const all = $('allwallets').checked ? '&all_wallets=true' : '';
+  let ws;
+  try { ws = await api(`/flow/wallets?limit=60&order_by=${order}${all}`); } catch { return; }
+  if (!ws.length) {
+    $('walletbox').innerHTML = '<div class="empty">ninguna wallet alcanza la muestra mínima ' +
+      'todavía — marca «incluir muestra insuficiente» para ver las anecdóticas</div>';
+    return;
+  }
+  $('walletbox').innerHTML = `
+    <table><thead><tr>
+      <th>Wallet</th><th>Cascadas</th><th>Liderazgo (cota · valor)</th><th>vs azar</th>
+      <th>Velocidad</th><th>Propagación</th><th>Temprano</th><th>Tardío</th>
+      <th>Temprano − tardío</th><th>Muestra</th></tr></thead><tbody>
+    ${ws.map(w => `<tr>
+      <td title="${esc(w.wallet)}">${esc(shortw(w.wallet))}</td>
+      <td>${w.n_cascades} <span class="weak">/ ${w.n_markets} mkt</span></td>
+      <td>${gauge(w.leadership_score, w.leadership_lower, '#2ec4b6')}
+          <span class="weak">${num(w.leadership_lower)} · ${num(w.leadership_score)}</span></td>
+      <td style="color:${w.edge_vs_chance>0?'var(--green)':(w.edge_vs_chance<0?'var(--red)':'var(--muted)')}">
+          ${w.edge_vs_chance>0?'+':''}${num(w.edge_vs_chance)}</td>
+      <td>${dur(w.information_speed)} <span class="weak">(${num(w.speed_score)})</span></td>
+      <td>${dur(w.propagation_time)}</td>
+      <td>${num(w.early_information_score)} <span class="weak">n=${w.n_early}</span></td>
+      <td>${num(w.late_information_score)} <span class="weak">n=${w.n_late}</span></td>
+      <td style="color:${w.information_edge>0?'var(--green)':'var(--muted)'}">
+          ${w.information_edge>0?'+':''}${num(w.information_edge)}</td>
+      <td>${w.enough_samples ? '<span style="color:var(--green)">suficiente</span>'
+                             : '<span class="weak">anecdótica</span>'}</td>
+    </tr>`).join('')}
+    </tbody></table>
+    <div class="note">
+      <b>Cómo leer esta tabla.</b> La barra sólida es la <b>cota inferior al 95%</b> y la
+      translúcida el valor puntual: la diferencia entre las dos es la incertidumbre.
+      La línea gris vertical marca el <b>0.5 del azar</b>. «Temprano» y «tardío» miden, de sus
+      entradas en la cabeza (o en la cola) de una cascada, en qué fracción el lado acabó
+      teniendo razón — por resolución si la hay, y si no por el movimiento posterior del
+      precio; los empates no puntúan. Un liderazgo alto significa <b>que entra pronto</b>,
+      no que los demás la sigan.
+    </div>`;
+}
+
+$('orderpick').onchange = loadWallets;
+$('allwallets').onchange = loadWallets;
+
+// -------------------------------------------------------------- mercados --
+async function loadMarkets() {
+  let ms;
+  try { ms = await api('/flow/markets?limit=40'); } catch { return; }
+  if (!ms.length) { $('marketbox').innerHTML = '<div class="empty">sin mercados analizados</div>'; return; }
+  $('marketbox').innerHTML = `
+    <table><thead><tr><th>Mercado</th><th>Cascadas</th><th>Wallets</th>
+      <th>Consenso</th><th>Propagación</th><th>Tamaño medio</th></tr></thead><tbody>
+    ${ms.map(m => `<tr>
+      <td title="${esc(m.market_id)}">${esc(shortw(m.market_id))}</td>
+      <td>${m.n_cascades}${m.enough_samples ? '' : ' <span class="weak">(poca)</span>'}</td>
+      <td>${m.n_wallets}</td>
+      <td>${dur(m.consensus_delay)}</td>
+      <td>${dur(m.propagation_time)}</td>
+      <td>${num(m.avg_cascade_size,1)}</td></tr>`).join('')}
+    </tbody></table>
+    <div class="note"><b>Consenso</b> = cuánto tarda media cascada en estar dentro.
+    Un mercado con consenso corto digiere la información deprisa; uno largo, despacio.</div>`;
+}
+
+// ----------------------------------------------------------------- pares --
+async function loadPairs() {
+  let ps;
+  try { ps = await api('/flow/pairs?limit=40&min_observations=5'); } catch { return; }
+  if (!ps.length) {
+    $('pairbox').innerHTML = '<div class="empty">ningún par se ha repetido lo suficiente ' +
+      '(hacen falta al menos 5 coincidencias)</div>';
+    return;
+  }
+  $('pairbox').innerHTML = `
+    <table><thead><tr><th>n</th><th>Antes</th><th>Después</th><th>Latencia</th>
+      <th>Mercados</th><th>Δ precio</th></tr></thead><tbody>
+    ${ps.map(p => `<tr>
+      <td><b>${p.n}</b></td>
+      <td title="${esc(p.leader)}">${esc(shortw(p.leader))}</td>
+      <td title="${esc(p.follower)}">${esc(shortw(p.follower))}</td>
+      <td>${dur(p.avg_lag)}</td>
+      <td>${p.markets}</td>
+      <td>${p.avg_price_move>0?'+':''}${num(p.avg_price_move,3)}</td></tr>`).join('')}
+    </tbody></table>
+    <div class="note"><b>Esto no es una relación de influencia.</b> Es un par que ha
+    coincidido en ese orden <i>n</i> veces. En un mercado con doscientas wallets activas
+    muchos pares coinciden varias veces sin que medie absolutamente nada — por eso la
+    columna <i>n</i> va la primera y por eso hay un mínimo de coincidencias.</div>`;
+}
+
+$('runbtn').onclick = async () => {
+  const btn = $('runbtn');
+  btn.disabled = true; btn.textContent = 'Analizando…';
+  try {
+    const r = await api('/flow/run', {method:'POST'});
+    banner('lock', `✅ Pasada completada en ${r.build_seconds}s sobre ` +
+      `<b>${r.markets_scanned}</b> mercados: <b>${r.stats.cascades}</b> cascadas, ` +
+      `<b>${r.stats.events}</b> eventos de propagación, <b>${r.stats.wallets}</b> wallets.`);
+  } catch (e) {
+    banner('err', 'No se pudo completar la pasada: ' + esc(e.message));
+  }
+  btn.disabled = false; btn.textContent = 'Ejecutar pasada';
+  refresh();
+};
+
+function refresh() {
+  loadStats(); loadCascades(); loadLag(); loadTimeline();
+  loadWallets(); loadMarkets(); loadPairs();
+}
+loadInfo(); refresh();
+// El motor corre como mucho cada 30 min: refrescar cada 60 s sobra.
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>

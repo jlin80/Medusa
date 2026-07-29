@@ -152,6 +152,18 @@ try:
 except Exception as exc:  # noqa: BLE001
     log.warning("api.wallet_router_unavailable", error=err(exc))
 
+# Information Flow Engine: router ADITIVO en /flow. Mismo blindaje que los dos
+# anteriores. Mide como se propaga la informacion (orden temporal), jamas
+# causalidad, y no expone ningun endpoint que opere.
+try:
+    from medusa.intelligence.flow.api import get_service as _flow_service
+    from medusa.intelligence.flow.api import router as flow_router
+
+    _flow_service(log)
+    app.include_router(flow_router)
+except Exception as exc:  # noqa: BLE001
+    log.warning("api.flow_router_unavailable", error=err(exc))
+
 # Sin login por diseño -> solo debe exponerse en LAN/VPN.
 app.add_middleware(
     CORSMiddleware,

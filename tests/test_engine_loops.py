@@ -239,7 +239,9 @@ def test_todos_los_loops_del_engine_pasan_por_la_guarda():
 
     fuente = inspect.getsource(Engine.run)
     loops = [n for n in dir(Engine) if n.endswith("_loop")]
-    assert len(loops) == 7, loops
+    # El numero es un canario: si aparece un loop nuevo, hay que decidir a
+    # conciencia que tambien va guardado (y actualizar esta cuenta).
+    assert len(loops) == 8, loops
     for nombre in loops:
         assert f"self.{nombre}" in fuente, f"{nombre} no esta en run()"
         assert f"_guarded(self.{nombre}" in fuente, f"{nombre} no pasa por _guarded"

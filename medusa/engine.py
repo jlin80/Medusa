@@ -37,6 +37,7 @@ from medusa.execution.paper import PaperExecutionEngine
 from medusa.execution.reconcile import Reconciler
 from medusa.infra.db import check_db, dispose, init_db
 from medusa.infra.redis_bus import check_redis, close
+from medusa.intelligence.flow import InformationFlowService
 from medusa.intelligence.mig import MIGService
 from medusa.intelligence.wallet import WalletIntelligenceService
 from medusa.intelligence_layer import IntelligenceRunner, build_default_modules
@@ -96,6 +97,11 @@ class Engine:
         # NO es copy trading y no tiene forma de operar (ver el paquete). Su
         # loop es independiente y esta apagado por defecto.
         self.wallets = WalletIntelligenceService(log, events.publish_log)
+        # Information Flow Engine: mide como se propaga la informacion (quien
+        # entra antes, cuanto tarda el siguiente, cuanto tarda el consenso).
+        # Mide PROPAGACION, jamas causalidad. No opera, no emite señales y su
+        # loop es independiente. Apagado por defecto.
+        self.flow = InformationFlowService(log, events.publish_log)
 
     def adapter_for(self, mode: Mode):
         return self._live if mode == Mode.LIVE else self._paper
@@ -600,6 +606,41 @@ class Engine:
                      "clusters": summary["clusters"]},
                 )
 
+    async def _flow_loop(self) -> None:
+        """Loop del Information Flow Engine, INDEPENDIENTE del de trading.
+
+        Habla con la Data API publica de Polymarket para leer la cinta de
+        trades, asi que por principio va en su propio task y con timeout: nada
+        que no sea proteger o abrir posiciones puede meterse en el camino del
+        ciclo de trading.
+
+        El motor produce EVENTOS DE PROPAGACION y METRICAS, nunca ordenes ni
+        señales, y mide orden temporal, jamas causalidad. Si el flag esta
+        apagado (default) este loop no hace absolutamente nada.
+        """
+        if not self.flow.enabled:
+            self.log.info("flow.disabled")
+            return
+        self.log.info("flow.enabled", interval=self.settings.flow_interval)
+        while not self._stop.is_set():
+            await self._sleep(self.settings.flow_interval)
+            if self._stop.is_set():
+                break
+            # run_guarded ya absorbe timeout y errores; este loop no puede tener
+            # otra forma de morir.
+            summary = await self.flow.run_guarded()
+            if summary:
+                stats = summary["stats"]
+                await events.publish_log(
+                    LogType.INFO,
+                    f"Information Flow: {stats['cascades']} cascadas, "
+                    f"{stats['events']} eventos de propagacion, "
+                    f"{stats['wallets']} wallets",
+                    {"cascades": stats["cascades"], "events": stats["events"],
+                     "wallets": stats["wallets"],
+                     "markets": summary["markets_scanned"]},
+                )
+
     async def _updown_loop(self) -> None:
         """Loop del micro-trader 'Up or Down', INDEPENDIENTE del ciclo de trading.
 
@@ -660,6 +701,14 @@ class Engine:
                     wi_pruned = await self.wallets.prune()
                     if any(wi_pruned.values()):
                         self.log.info("engine.pruned_wallets", **wi_pruned)
+                # Information Flow: la cinta cruda se poda pronto (crece rapido);
+                # cascadas, eslabones y snapshots aguantan mucho mas, porque son
+                # la unica serie larga de propagacion que existe. Las metricas
+                # por wallet y por mercado no se podan nunca.
+                if self.flow.enabled:
+                    flow_pruned = await self.flow.prune()
+                    if any(flow_pruned.values()):
+                        self.log.info("engine.pruned_flow", **flow_pruned)
             except Exception as exc:  # noqa: BLE001
                 self.log.warning("engine.prune_failed", error=err(exc))
 
@@ -760,6 +809,7 @@ class Engine:
                 self._guarded(self._updown_loop, "updown"),
                 self._guarded(self._mig_loop, "mig"),
                 self._guarded(self._wallet_loop, "wallet"),
+                self._guarded(self._flow_loop, "flow"),
             )
         finally:
             await self.shutdown()
@@ -780,6 +830,10 @@ class Engine:
             await self.wallets.close()
         except Exception as exc:  # noqa: BLE001
             self.log.warning("wallet.close_failed", error=err(exc))
+        try:
+            await self.flow.close()
+        except Exception as exc:  # noqa: BLE001
+            self.log.warning("flow.close_failed", error=err(exc))
         await self.client.close()
         await close()
         await dispose()

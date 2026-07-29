@@ -213,6 +213,57 @@ class Settings(BaseSettings):
     # grafo, y perderlos rompe el `first_seen` del que sale el crecimiento.
     mig_retention_days: int = 365
 
+    # ---- Information Flow Engine (IFE) ----
+    # Mide COMO SE PROPAGA la informacion dentro de un mercado: quien entra
+    # antes, cuanto tarda el siguiente, cuanto tarda el consenso y si el lado
+    # acabo teniendo razon. MIDE PROPAGACION, JAMAS CAUSALIDAD: que B entre
+    # despues de A no dice que B siga a A. No opera, no emite señales y no toca
+    # el Risk Manager. Apagado por defecto, como toda pieza nueva.
+    flow_enabled: bool = False
+    # Cada cuanto corre una pasada. Media hora: la cinta publica se mueve en
+    # minutos, pero las cadenas que interesan tardan horas en formarse.
+    flow_interval: float = 1800.0
+    # Presupuesto de tiempo de una pasada. Si se pasa, se corta y se registra:
+    # el motor jamas puede arrastrar al engine.
+    flow_timeout: float = 180.0
+    # Mercados por pasada y trades que se piden de cada uno. Acotan las
+    # peticiones a la API publica y la memoria en una maquina de 3 GB.
+    flow_max_markets: int = 40
+    flow_trades_per_market: int = 500
+    # Ventana de historia que se ANALIZA (sale de la BD, no de la red): con 72 h
+    # caben las cadenas lentas sin cargar meses de cinta.
+    flow_lookback_hours: float = 72.0
+    # Hueco maximo entre dos entradas para seguir en la misma cascada. Subirlo
+    # une rachas que no tienen nada que ver; bajarlo parte cadenas reales.
+    flow_window_seconds: float = 3600.0
+    # Participantes minimos para que una racha cuente como cascada. Con 2,
+    # cualquier par de entradas seguidas seria una "cascada".
+    flow_min_participants: int = 3
+    # Distancia maxima en la cadena para emitir un eslabon. Emparejar a todos
+    # con todos daria O(n^2) eventos y el par que va 40 entradas por detras no
+    # describe propagacion: describe coincidencia de mercado.
+    flow_max_hops: int = 3
+    # Fraccion de la cascada que define el CONSENSUS DELAY (mediana por defecto).
+    flow_consensus_fraction: float = 0.5
+    # Vida media (s) del `speed_score`: convierte una latencia en un numero
+    # acotado y comparable entre mercados de escalas muy distintas.
+    flow_speed_half_life: float = 300.0
+    # Que se considera entrada "temprana" y "tardia" por rango normalizado.
+    flow_early_fraction: float = 0.33
+    flow_late_fraction: float = 0.33
+    # Movimiento minimo del precio para que una cascada sin resolver puntue. Por
+    # debajo, la observacion NO cuenta: contar un empate como acierto es la forma
+    # mas silenciosa de fabricar significancia.
+    flow_min_price_move: float = 0.02
+    # Cascadas minimas para que una wallet se lea como evidencia y no como
+    # anecdota, y coincidencias minimas para publicar un par (lider, seguidor).
+    flow_min_samples: int = 10
+    flow_min_pair_observations: int = 5
+    # Poda. Dos retenciones: la cinta cruda crece rapido y se poda pronto; las
+    # cascadas, los eslabones y los snapshots son el conocimiento del motor.
+    flow_retention_days: int = 365
+    flow_trade_retention_days: int = 45
+
     # ---- Micro-trader "Up or Down" 5 min (medusa.updown) ----
     # Subsistema desacoplado para las ventanas cripto de 5 min de Polymarket
     # (bnb-updown-5m-*). Apagado por defecto: encenderlo NO cambia nada del
