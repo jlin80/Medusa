@@ -671,8 +671,22 @@ async def test_intelligence_layer() -> None:
     check("por defecto ninguna opera, ni en paper ni en live",
           not any(mgr.can_trade_in(st.name, "paper") for st in mgr.strategies)
           and not any(mgr.can_trade_in(st.name, "live") for st in mgr.strategies))
-    check("modulos por defecto del layer: microstructure",
-          [mod.name for mod in build_default_modules(log)] == ["microstructure"])
+    # El REGISTRO puede crecer (hoy: microstructure + wallet); lo que no puede
+    # cambiar es que un modulo solo CORRA si se le nombra en la lista blanca.
+    # Antes se comprobaba el registro exacto, y eso confundia "esta disponible"
+    # con "esta encendido": registrar un modulo nuevo tumbaba el selftest aunque
+    # el runtime siguiera comportandose exactamente igual.
+    from medusa.intelligence_layer import IntelligenceRunner
+    registro = [mod.name for mod in build_default_modules(log)]
+    corriendo = [mod.name for mod in
+                 IntelligenceRunner(log, build_default_modules(log)).modules]
+    check("microstructure sigue en el registro del layer", "microstructure" in registro,
+          str(registro))
+    check("solo corre lo que nombra la lista blanca (INTELLIGENCE_MODULES)",
+          corriendo == ["microstructure"], str(corriendo))
+    check("wallet esta disponible pero NO encendido por defecto",
+          "wallet" in registro and "wallet" not in corriendo,
+          "registrarlo no puede encenderlo: manda la lista blanca")
 
 
 def test_updown() -> None:

@@ -40,6 +40,17 @@ __all__ = [
 
 def build_default_modules(log) -> list[IntelligenceModule]:
     """Modulos disponibles. Cual corre lo decide INTELLIGENCE_MODULES."""
-    return [
+    modules: list[IntelligenceModule] = [
         MicrostructureIntelligence(log),
     ]
+    # Wallet Intelligence: reputacion agregada de los holders de cada mercado.
+    # Sigue siendo opt-in por la lista blanca INTELLIGENCE_MODULES (registrarlo
+    # aqui no lo enciende). Import perezoso y aislado: un paquete opcional no
+    # puede impedir que el layer levante con los modulos de siempre.
+    try:
+        from medusa.intelligence.wallet.module import WalletIntelligence
+
+        modules.append(WalletIntelligence(log))
+    except Exception:  # noqa: BLE001
+        pass
+    return modules

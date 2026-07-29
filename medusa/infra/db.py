@@ -81,11 +81,37 @@ _COLUMN_MIGRATIONS: tuple[str, ...] = (
 )
 
 
+def _extra_migrations() -> tuple[str, ...]:
+    """Migraciones de los paquetes ADITIVOS (Market Intelligence Graph y Wallet
+    Intelligence).
+
+    Se importan aqui dentro, no arriba, y cada uno en su propio try: un fallo de
+    importacion de un paquete opcional no puede impedir el arranque del engine
+    ni de la API, y tampoco puede arrastrar al otro paquete opcional. Sin el
+    import, el resto del esquema se crea igual que antes de que existieran. El
+    import ademas registra sus tablas en `Base`, que es lo que hace que
+    `create_all` (arriba) las cree.
+    """
+    out: tuple[str, ...] = ()
+    try:
+        from medusa.intelligence.mig.migrations import MIG_MIGRATIONS
+        out += MIG_MIGRATIONS
+    except Exception:  # noqa: BLE001 - un paquete opcional nunca bloquea el arranque
+        pass
+    try:
+        from medusa.intelligence.wallet.migrations import WALLET_MIGRATIONS
+        out += WALLET_MIGRATIONS
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 async def init_db() -> None:
     """Crea las tablas si no existen y aplica la migracion ligera (idempotente)."""
+    extra = _extra_migrations()
     async with get_engine().begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        for stmt in _COLUMN_MIGRATIONS:
+        for stmt in _COLUMN_MIGRATIONS + extra:
             await conn.execute(text(stmt))
 
 

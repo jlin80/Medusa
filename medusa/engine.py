@@ -37,6 +37,8 @@ from medusa.execution.paper import PaperExecutionEngine
 from medusa.execution.reconcile import Reconciler
 from medusa.infra.db import check_db, dispose, init_db
 from medusa.infra.redis_bus import check_redis, close
+from medusa.intelligence.mig import MIGService
+from medusa.intelligence.wallet import WalletIntelligenceService
 from medusa.intelligence_layer import IntelligenceRunner, build_default_modules
 from medusa.logging_setup import configure_logging
 from medusa.notifications.discord import DiscordNotifier
@@ -86,6 +88,14 @@ class Engine:
         self.updown = build_updown_trader(
             self.client, self.notifier, log, events.publish_log
         )
+        # Market Intelligence Graph: observa el sistema y construye el grafo de
+        # relaciones. Solo lee tablas y escribe en las suyas (`mig_*`); no tiene
+        # adapter de ejecucion ni conoce al Risk Manager. Apagado por defecto.
+        self.mig = MIGService(log, events.publish_log)
+        # Wallet Intelligence: perfila wallets publicas y produce features.
+        # NO es copy trading y no tiene forma de operar (ver el paquete). Su
+        # loop es independiente y esta apagado por defecto.
+        self.wallets = WalletIntelligenceService(log, events.publish_log)
 
     def adapter_for(self, mode: Mode):
         return self._live if mode == Mode.LIVE else self._paper
@@ -510,6 +520,71 @@ class Engine:
             except Exception as exc:  # noqa: BLE001 - el layer jamas tumba el engine
                 self.log.error("intel.loop_failed", error=err(exc), exc_info=True)
 
+    async def _mig_loop(self) -> None:
+        """Loop del Market Intelligence Graph, INDEPENDIENTE del de trading.
+
+        El MIG solo lee tablas y escribe en las suyas (`mig_*`): no manda
+        ordenes, no toca posiciones y no conoce al Risk Manager. Aun asi vive en
+        su propio loop y con timeout, por la misma razon que el Intelligence
+        Layer: nada que no sea proteger o abrir posiciones puede meterse en el
+        camino del ciclo de trading.
+
+        Si el flag esta apagado (default) este loop no hace absolutamente nada.
+        """
+        if not self.mig.enabled:
+            self.log.info("mig.disabled")
+            return
+        self.log.info("mig.enabled", interval=self.settings.mig_interval)
+        while not self._stop.is_set():
+            # Primero se espera: al arrancar, las tablas aun no tienen nada que
+            # el ciclo de trading no haya escrito ya en pasadas anteriores.
+            await self._sleep(self.settings.mig_interval)
+            if self._stop.is_set():
+                break
+            # build_guarded ya absorbe timeout y errores; este loop no puede
+            # tener otra forma de morir.
+            summary = await self.mig.build_guarded()
+            if summary:
+                await events.publish_log(
+                    LogType.INFO,
+                    f"MIG reconstruido: {summary['stats']['nodes']} nodos, "
+                    f"{summary['stats']['edges']} aristas, "
+                    f"{summary['discoveries']} descubrimientos",
+                    {"nodes": summary["stats"]["nodes"],
+                     "edges": summary["stats"]["edges"],
+                     "discoveries": summary["discoveries"]},
+                )
+
+    async def _wallet_loop(self) -> None:
+        """Loop de Wallet Intelligence, INDEPENDIENTE del ciclo de trading.
+
+        Habla con la Data API publica de Polymarket, asi que por principio va en
+        su propio task y con timeout: nada que no sea proteger o abrir
+        posiciones puede meterse en el camino del ciclo de trading.
+
+        El subsistema produce FEATURES, nunca ordenes. Si el flag esta apagado
+        (default) este loop no hace absolutamente nada.
+        """
+        if not self.wallets.enabled:
+            self.log.info("wallet.disabled")
+            return
+        self.log.info("wallet.enabled", interval=self.settings.wallet_intel_interval)
+        while not self._stop.is_set():
+            await self._sleep(self.settings.wallet_intel_interval)
+            if self._stop.is_set():
+                break
+            summary = await self.wallets.run_guarded()
+            if summary:
+                await events.publish_log(
+                    LogType.INFO,
+                    f"Wallet Intelligence: {summary['wallets_profiled']} wallets "
+                    f"perfiladas ({summary['positions']} posiciones, "
+                    f"{summary['clusters']} clusters)",
+                    {"wallets": summary["wallets_profiled"],
+                     "positions": summary["positions"],
+                     "clusters": summary["clusters"]},
+                )
+
     async def _updown_loop(self) -> None:
         """Loop del micro-trader 'Up or Down', INDEPENDIENTE del ciclo de trading.
 
@@ -557,6 +632,19 @@ class Engine:
                 pruned = await repo.prune_features(self.settings.feature_retention_days)
                 if pruned:
                     self.log.info("engine.pruned_features", features=pruned)
+                # MIG: solo se podan descubrimientos y snapshots. Nodos y
+                # aristas NO: son el grafo, y borrarlos falsearia el
+                # `first_seen` del que sale la curva de crecimiento.
+                if self.mig.enabled:
+                    mig_pruned = await self.mig.prune()
+                    if any(mig_pruned.values()):
+                        self.log.info("engine.pruned_mig", **mig_pruned)
+                # Wallet Intelligence: se podan historico y pasadas, nunca los
+                # perfiles (perderlos borraria su `first_seen`).
+                if self.wallets.enabled:
+                    wi_pruned = await self.wallets.prune()
+                    if any(wi_pruned.values()):
+                        self.log.info("engine.pruned_wallets", **wi_pruned)
             except Exception as exc:  # noqa: BLE001
                 self.log.warning("engine.prune_failed", error=err(exc))
 
@@ -597,6 +685,8 @@ class Engine:
                 self._guarded(self._maintenance_loop, "maintenance"),
                 self._guarded(self._intelligence_loop, "intelligence"),
                 self._guarded(self._updown_loop, "updown"),
+                self._guarded(self._mig_loop, "mig"),
+                self._guarded(self._wallet_loop, "wallet"),
             )
         finally:
             await self.shutdown()
@@ -613,6 +703,10 @@ class Engine:
             await self.updown.close()
         except Exception as exc:  # noqa: BLE001
             self.log.warning("updown.close_failed", error=err(exc))
+        try:
+            await self.wallets.close()
+        except Exception as exc:  # noqa: BLE001
+            self.log.warning("wallet.close_failed", error=err(exc))
         await self.client.close()
         await close()
         await dispose()

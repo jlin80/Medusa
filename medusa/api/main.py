@@ -127,6 +127,31 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Medusa API", version="1.0.0", lifespan=lifespan)
 
+# Market Intelligence Graph (MIG): router ADITIVO. Todos sus endpoints cuelgan
+# de /mig y son de lectura salvo la reconstruccion del grafo. Si el paquete
+# fallara al importar, la API arranca igual y simplemente no habra /mig: una
+# pieza opcional no puede tumbar el panel de control del bot.
+try:
+    from medusa.intelligence.mig.api import get_service as _mig_service
+    from medusa.intelligence.mig.api import router as mig_router
+
+    _mig_service(log)          # instancia el servicio con el logger de la API
+    app.include_router(mig_router)
+except Exception as exc:  # noqa: BLE001
+    log.warning("api.mig_router_unavailable", error=err(exc))
+
+# Wallet Intelligence: router ADITIVO en /wallets. Mismo blindaje que el MIG:
+# si el paquete fallara al importar, la API arranca igual y simplemente no habra
+# /wallets. NO es copy trading y no expone ningun endpoint que opere.
+try:
+    from medusa.intelligence.wallet.api import get_service as _wallet_service
+    from medusa.intelligence.wallet.api import router as wallet_router
+
+    _wallet_service(log)
+    app.include_router(wallet_router)
+except Exception as exc:  # noqa: BLE001
+    log.warning("api.wallet_router_unavailable", error=err(exc))
+
 # Sin login por diseño -> solo debe exponerse en LAN/VPN.
 app.add_middleware(
     CORSMiddleware,

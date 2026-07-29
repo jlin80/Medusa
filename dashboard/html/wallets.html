@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Medusa · Wallet Intelligence</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#121820; --panel-2:#171f2a; --line:#243040;
+      --txt:#e6edf3; --muted:#8b9bb0; --accent:#2ec4b6; --accent-2:#3498db;
+      --green:#2ecc71; --red:#e74c3c; --orange:#e67e22; --purple:#9b59b6;
+      --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--txt);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:16px}
+    a{color:var(--accent);text-decoration:none}
+    a:hover{text-decoration:underline}
+    .wrap{max-width:1500px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+    .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+      background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+    .brand{font-size:19px;font-weight:700;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+    .brand small{color:var(--muted);font-weight:400;font-size:12px;letter-spacing:0}
+    .spacer{flex:1}
+    .chip{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
+      padding:5px 12px;font-size:12px;color:var(--muted);white-space:nowrap}
+    .chip b{color:var(--txt)}
+    button{background:var(--panel-2);color:var(--txt);border:1px solid var(--line);
+      border-radius:8px;padding:7px 13px;cursor:pointer;font-size:13px;transition:.15s}
+    button:hover{border-color:var(--accent)}
+    button:disabled{opacity:.4;cursor:not-allowed}
+    input.inp,select{background:var(--bg);color:var(--txt);border:1px solid var(--line);
+      border-radius:8px;padding:6px 10px;font-size:12.5px;font-family:var(--mono)}
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+    .card .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+    .card .v{font-size:21px;font-weight:700;margin-top:4px;font-family:var(--mono)}
+    *{scrollbar-width:thin;scrollbar-color:#2b3646 transparent}
+    ::-webkit-scrollbar{width:9px;height:9px}
+    ::-webkit-scrollbar-thumb{background:#2b3646;border-radius:999px;
+      border:2px solid transparent;background-clip:padding-box}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    @media(max-width:1100px){.grid{grid-template-columns:1fr}}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+      display:flex;flex-direction:column}
+    .phead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);
+      background:var(--panel-2);flex-wrap:wrap}
+    .phead h2{font-size:13px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--muted)}
+    .pbody{padding:12px 14px;overflow:auto;max-height:400px}
+    table{width:100%;border-collapse:collapse;font-size:12.5px}
+    th{text-align:left;color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;
+      padding:6px 8px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+    td{padding:6px 8px;border-bottom:1px solid #1b2430;font-family:var(--mono);font-size:12px}
+    tr:last-child td{border-bottom:none}
+    tr.clickable{cursor:pointer}
+    tr.clickable:hover td{background:var(--panel-2)}
+    .empty{color:var(--muted);text-align:center;padding:24px;font-size:13px}
+    .addr{font-family:var(--mono);font-size:11.5px}
+    /* barras de ADN / importancia */
+    .barrow{display:flex;align-items:center;gap:9px;padding:4px 0}
+    .barrow .nm{width:160px;font-size:11.5px;color:var(--muted)}
+    .barrow .track{flex:1;height:8px;background:#1b2430;border-radius:999px;position:relative}
+    .barrow .track>div{height:100%;border-radius:999px;position:absolute;top:0}
+    .barrow .n{width:78px;text-align:right;font-family:var(--mono);font-size:11.5px}
+    .banner{border-radius:8px;padding:9px 12px;font-size:12.5px;margin-bottom:11px;line-height:1.45}
+    .banner.lock{background:#12211f;border:1px solid #1e4d46;color:#8fe3d8}
+    .banner.err{background:#241414;border:1px solid #5b2b2b;color:#ff9c9c}
+    .note{color:#8b9bb0;font-size:11.5px;margin-top:10px;line-height:1.6}
+    .pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;
+      border:1px solid var(--line);color:var(--muted)}
+    .foot{color:#4a5a6e;font-size:11px;text-align:center;padding:4px 0 10px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">👛 WALLET INTELLIGENCE <small>ADN numérico de wallets · no es copy trading</small></div>
+    <span class="chip" id="engstate">—</span>
+    <div class="spacer"></div>
+    <a href="/index.html"><button>← Panel</button></a>
+    <a href="/research.html"><button>🕸️ Research Lab</button></a>
+    <button id="buildbtn">Recalcular perfiles</button>
+  </div>
+
+  <div id="alert"></div>
+
+  <div class="banner lock">
+    <b>Esto NO es copy trading.</b> El subsistema convierte actividad pública en
+    <b>19 números por wallet</b> y en features por mercado. No mira el lado (YES/NO) de nadie,
+    no propone tamaño ni precio, y no existe ningún camino desde esta página hasta una orden.
+    Un <b>cluster es un entero</b>: su significado son los números de su centroide, no una etiqueta.
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <!-- ============ 1 · WALLET EXPLORER ============ -->
+  <div class="panel">
+    <div class="phead">
+      <h2>1 · Wallet Explorer</h2>
+      <div class="spacer"></div>
+      <input class="inp" id="q" placeholder="filtrar por dirección…" style="width:220px" />
+      <select id="orderby">
+        <option value="reputation">orden: reputación</option>
+        <option value="score">orden: score</option>
+        <option value="n_closed">orden: muestra</option>
+        <option value="updated_at">orden: actualización</option>
+      </select>
+      <select id="minclosed">
+        <option value="0">todas</option>
+        <option value="1">con posiciones cerradas</option>
+        <option value="30">con muestra ≥ 30</option>
+      </select>
+    </div>
+    <div class="pbody" id="explorer"><div class="empty">cargando…</div></div>
+  </div>
+
+  <div class="grid">
+    <!-- ============ 2 · WALLET DNA ============ -->
+    <div class="panel">
+      <div class="phead"><h2>2 · Wallet DNA</h2><div class="spacer"></div>
+        <span class="chip" id="dnawallet">selecciona una wallet</span></div>
+      <div class="pbody" id="dnabox" style="max-height:none"><div class="empty">
+        haz clic en una wallet del explorador</div></div>
+    </div>
+
+    <!-- ============ 3 · WALLET REPUTATION ============ -->
+    <div class="panel">
+      <div class="phead"><h2>3 · Wallet Reputation</h2><div class="spacer"></div>
+        <span class="chip">score × muestra × frescura × estabilidad</span></div>
+      <div class="pbody" id="repbox"><div class="empty">cargando…</div></div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- ============ 4 · WALLET SIMILARITY ============ -->
+    <div class="panel">
+      <div class="phead"><h2>4 · Wallet Similarity</h2><div class="spacer"></div>
+        <span class="chip" id="simwallet">—</span></div>
+      <div class="pbody" id="simbox"><div class="empty">
+        selecciona una wallet en el explorador</div></div>
+    </div>
+
+    <!-- ============ 5 · WALLET CLUSTERS ============ -->
+    <div class="panel">
+      <div class="phead"><h2>5 · Wallet Clusters</h2><div class="spacer"></div>
+        <span class="chip" id="clustertot">—</span></div>
+      <div class="pbody" id="clusterbox"><div class="empty">cargando…</div></div>
+    </div>
+  </div>
+
+  <!-- ============ 6 · WALLET EVOLUTION ============ -->
+  <div class="panel">
+    <div class="phead"><h2>6 · Wallet Evolution</h2><div class="spacer"></div>
+      <span class="chip" id="evorange">—</span></div>
+    <div class="pbody" style="max-height:none">
+      <svg id="evochart" viewBox="0 0 600 180" preserveAspectRatio="none"
+           style="width:100%;height:180px"></svg>
+      <div class="note">
+        <span style="color:var(--accent)">■</span> reputación ·
+        <span style="color:var(--accent-2)">■</span> score ·
+        <span style="color:var(--orange)">■</span> muestra (normalizada) —
+        una muestra por pasada. Si la reputación cae con el score plano, lo que se está
+        degradando es la <b>frescura</b> o la <b>estabilidad</b>, no el resultado.
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 7 · FEATURE IMPORTANCE ============ -->
+  <div class="panel">
+    <div class="phead"><h2>7 · Feature Importance</h2><div class="spacer"></div>
+      <span class="chip">dispersión × asociación con el ROI reciente</span></div>
+    <div class="pbody" id="impbox" style="max-height:none"><div class="empty">cargando…</div></div>
+  </div>
+
+  <div class="foot">
+    Wallet Intelligence produce features. Nunca operaciones.
+  </div>
+</div>
+
+<script>
+const API = '/api';
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hhmm = ts => { try { return new Date(ts).toLocaleString('es-ES',{hour12:false}); } catch { return '—'; } };
+const short = w => w && w.length > 14 ? w.slice(0,8) + '…' + w.slice(-4) : (w || '—');
+const num = (v, d=3) => (v == null || isNaN(v)) ? '—' : Number(v).toFixed(d);
+
+let selected = null, defs = {}, features = [];
+
+async function api(path, opts) {
+  const r = await fetch(API + path, opts);
+  if (!r.ok) {
+    let detail = r.statusText;
+    try { detail = (await r.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return r.json();
+}
+function banner(kind, html) { $('alert').innerHTML = `<div class="banner ${kind}">${html}</div>`; }
+
+/* -------- info + cabecera -------- */
+async function loadInfo() {
+  try {
+    const info = await api('/wallets/info');
+    defs = info.dna_definitions || {};
+    features = info.dna_features || [];
+    $('engstate').innerHTML = info.enabled
+      ? '<span style="color:var(--green)">■</span> perfilado automático activo'
+      : '<span style="color:var(--orange)">■</span> automático apagado (WALLET_INTEL_ENABLED=false)';
+  } catch (e) {
+    $('engstate').textContent = 'API no disponible';
+    banner('err', 'No se pudo hablar con la API: ' + esc(e.message));
+  }
+}
+
+async function loadStats() {
+  let st;
+  try { st = await api('/wallets/stats'); } catch { return; }
+  const run = st.last_run || {};
+  const cards = [
+    ['Wallets perfiladas', (st.wallets||0).toLocaleString('es-ES')],
+    ['Con muestra cerrada', (st.wallets_with_closed_positions||0).toLocaleString('es-ES')],
+    ['Reputación media', num(st.avg_reputation)],
+    ['Pares similares', (st.similarity_pairs||0).toLocaleString('es-ES')],
+    ['Clusters', String(run.clusters ?? '—')],
+    ['Posiciones leídas', (run.positions||0).toLocaleString('es-ES')],
+    ['Última pasada', run.ts ? hhmm(run.ts) : '—'],
+    ['Duración', run.build_seconds != null ? run.build_seconds.toFixed(1)+'s' : '—'],
+  ];
+  $('cards').innerHTML = cards.map(([k,v]) =>
+    `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+}
+
+/* -------- 1 · explorer -------- */
+async function loadExplorer() {
+  const params = new URLSearchParams({
+    limit: '100', order_by: $('orderby').value, min_closed: $('minclosed').value,
+  });
+  if ($('q').value.trim()) params.set('search', $('q').value.trim());
+  let ws;
+  try { ws = await api('/wallets?' + params.toString()); } catch { return; }
+  if (!ws.length) {
+    $('explorer').innerHTML = '<div class="empty">sin wallets perfiladas todavía — ' +
+      'pulsa «Recalcular perfiles»</div>';
+    return;
+  }
+  $('explorer').innerHTML = `
+    <table><thead><tr>
+      <th>Wallet</th><th>Reputación</th><th>Score</th><th>Cerradas</th><th>Mercados</th>
+      <th>ROI hist.</th><th>ROI rec.</th><th>Win rate</th><th>Sharpe</th><th>Cluster</th>
+      <th>Actualizada</th></tr></thead><tbody>
+    ${ws.map(w => {
+      const d = w.dna || {};
+      return `<tr class="clickable" data-w="${esc(w.wallet)}">
+        <td class="addr" title="${esc(w.wallet)}">${esc(short(w.wallet))}</td>
+        <td><b>${num(w.reputation)}</b></td>
+        <td>${num(w.score)}</td>
+        <td>${w.n_closed}</td><td>${w.n_markets}</td>
+        <td>${num(d.roi_historical)}</td><td>${num(d.roi_recent)}</td>
+        <td>${num(d.win_rate,2)}</td><td>${num(d.sharpe,2)}</td>
+        <td><span class="pill">${w.cluster >= 0 ? w.cluster : '—'}</span></td>
+        <td style="color:#4a5a6e">${hhmm(w.updated_at)}</td></tr>`;
+    }).join('')}
+    </tbody></table>
+    <div class="note">Haz clic en una fila para ver su <b>ADN</b>, sus <b>similares</b> y su
+    <b>evolución</b>. La <b>reputación</b> ya castiga la muestra corta: una wallet con 3
+    posiciones cerradas no puede puntuar alto por mucho que haya acertado las tres.</div>`;
+  document.querySelectorAll('#explorer tr.clickable').forEach(tr => {
+    tr.onclick = () => selectWallet(tr.dataset.w);
+  });
+  if (!selected) selectWallet(ws[0].wallet);
+}
+
+/* -------- 2 · DNA -------- */
+function dnaBars(dna) {
+  // Cada métrica en su propia escala: se dibuja la magnitud relativa al máximo
+  // absoluto del perfil, con el signo a color. Comparar un Sharpe con un
+  // win rate en la misma barra absoluta no significaría nada.
+  const entries = features.length ? features.map(f => [f, dna[f] ?? 0]) : Object.entries(dna);
+  const max = Math.max(...entries.map(([,v]) => Math.abs(v)), 1e-9);
+  return entries.map(([k,v]) => {
+    const pct = Math.min(100, Math.abs(v) / max * 100);
+    const col = v >= 0 ? 'var(--accent)' : 'var(--red)';
+    const left = v >= 0 ? '50%' : (50 - pct/2) + '%';
+    return `<div class="barrow" title="${esc(defs[k] || '')}">
+      <span class="nm">${esc(k)}</span>
+      <span class="track"><div style="left:${left};width:${(pct/2).toFixed(1)}%;background:${col}"></div></span>
+      <span class="n">${num(v,4)}</span></div>`;
+  }).join('');
+}
+
+async function loadDNA(wallet) {
+  let p;
+  try { p = await api('/wallets/' + encodeURIComponent(wallet)); } catch (e) {
+    $('dnabox').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return;
+  }
+  $('dnawallet').innerHTML = `<b class="addr">${esc(short(p.wallet))}</b> · n=${p.n_closed}`;
+  const cats = Object.entries(p.categories || {});
+  $('dnabox').innerHTML = dnaBars(p.dna || {}) +
+    `<div class="note">
+      <b>Muestra:</b> ${p.n_closed} cerradas de ${p.n_positions} · ${p.n_markets} mercados ·
+      ${p.n_categories} categorías · primera ${hhmm(p.first_trade)} · última ${hhmm(p.last_trade)}.
+      Pasa el ratón por cada métrica para ver su definición.
+    </div>` +
+    (cats.length ? `<div style="margin-top:10px">
+      <table><thead><tr><th>Categoría</th><th>n</th><th>Peso</th><th>Win rate</th>
+      <th>Wilson</th><th>ROI medio</th></tr></thead><tbody>
+      ${cats.map(([c,v]) => `<tr><td>${esc(c)}</td><td>${v.n}</td>
+        <td>${num(v.share,3)}</td><td>${num(v.win_rate,3)}</td>
+        <td>${num(v.wilson,3)}</td><td>${num(v.avg_roi,4)}</td></tr>`).join('')}
+      </tbody></table></div>` : '');
+}
+
+/* -------- 3 · reputación -------- */
+async function loadReputation() {
+  let rs;
+  try { rs = await api('/wallets/reputation?limit=25&min_closed=1'); } catch { return; }
+  if (!rs.length) { $('repbox').innerHTML = '<div class="empty">sin datos</div>'; return; }
+  $('repbox').innerHTML = `
+    <table><thead><tr><th>#</th><th>Wallet</th><th>Reputación</th><th>Score</th>
+      <th>Cerradas</th><th>Frescura</th></tr></thead><tbody>
+    ${rs.map((w,i) => `<tr class="clickable" data-w="${esc(w.wallet)}">
+      <td>${i+1}</td><td class="addr" title="${esc(w.wallet)}">${esc(short(w.wallet))}</td>
+      <td><b>${num(w.reputation)}</b></td><td>${num(w.score)}</td>
+      <td>${w.n_closed}</td><td>${num((w.dna||{}).freshness,3)}</td></tr>`).join('')}
+    </tbody></table>
+    <div class="note">La reputación es <b>multiplicativa</b>: muestra × frescura × estabilidad.
+    Cualquiera de los tres cerca de cero la anula por su cuenta — y eso es deliberado, porque
+    un track record excelente de hace ocho meses describe a alguien que ya no está operando.</div>`;
+  document.querySelectorAll('#repbox tr.clickable').forEach(tr => {
+    tr.onclick = () => selectWallet(tr.dataset.w);
+  });
+}
+
+/* -------- 4 · similitud -------- */
+async function loadSimilar(wallet) {
+  let ss;
+  try { ss = await api(`/wallets/${encodeURIComponent(wallet)}/similar?limit=15`); } catch { return; }
+  $('simwallet').innerHTML = `<b class="addr">${esc(short(wallet))}</b>`;
+  if (!ss.length) {
+    $('simbox').innerHTML = '<div class="empty">sin wallets suficientemente parecidas</div>';
+    return;
+  }
+  $('simbox').innerHTML = `
+    <table><thead><tr><th>Wallet</th><th>Similitud (coseno)</th></tr></thead><tbody>
+    ${ss.map(s => `<tr class="clickable" data-w="${esc(s.wallet)}">
+      <td class="addr" title="${esc(s.wallet)}">${esc(short(s.wallet))}</td>
+      <td>${num(s.similarity,4)}</td></tr>`).join('')}
+    </tbody></table>
+    <div class="note">Coseno sobre el ADN estandarizado: mide el <b>perfil</b> (en qué dirección se
+    desvía de la media), no la magnitud. <b>No es una sugerencia de copiar a nadie.</b></div>`;
+  document.querySelectorAll('#simbox tr.clickable').forEach(tr => {
+    tr.onclick = () => selectWallet(tr.dataset.w);
+  });
+}
+
+/* -------- 5 · clusters -------- */
+async function loadClusters() {
+  let cs;
+  try { cs = await api('/wallets/clusters'); } catch { return; }
+  if (!cs.length) {
+    $('clusterbox').innerHTML = '<div class="empty">todavía no hay clusters ' +
+      '(hacen falta más wallets perfiladas)</div>';
+    $('clustertot').textContent = '—'; return;
+  }
+  $('clustertot').innerHTML = `<b>${cs.length}</b> grupos`;
+  $('clusterbox').innerHTML = cs.map(c => `
+    <div style="border-bottom:1px solid #1b2430;padding:8px 0">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="pill">cluster ${c.cluster}</span>
+        <b>${c.size}</b> wallets · ${(c.share*100).toFixed(0)}%
+      </div>
+      <div style="margin-top:5px;font-family:var(--mono);font-size:11.5px;color:var(--muted)">
+        ${(c.separating_features||[]).map(f =>
+          `${esc(f.feature)} <span style="color:${f.z>=0?'var(--accent)':'var(--red)'}">${num(f.z,2)}σ</span>`
+        ).join(' · ')}
+      </div>
+    </div>`).join('') +
+    `<div class="note">Un cluster es <b>un entero</b>, sin nombre. Lo que se publica son los
+     números que lo separan de la media de la población (en desviaciones típicas). Ponerle
+     etiqueta —"smart money", "ballenas"— sería una interpretación humana, y el momento en que
+     entra en el código es el momento en que el sistema la hereda como si fuese un dato.</div>`;
+}
+
+/* -------- 6 · evolución -------- */
+async function loadEvolution(wallet) {
+  let hs;
+  try { hs = await api(`/wallets/${encodeURIComponent(wallet)}/history?limit=200`); } catch { return; }
+  const svg = $('evochart');
+  if (!hs || hs.length < 2) {
+    svg.innerHTML = '<text x="300" y="95" fill="#8b9bb0" font-size="12" text-anchor="middle">' +
+      'hacen falta al menos dos pasadas para dibujar la evolución</text>';
+    $('evorange').textContent = short(wallet) + ' · ' + ((hs && hs.length) || 0) + ' pasadas';
+    return;
+  }
+  const maxN = Math.max(...hs.map(h => h.n_closed), 1);
+  const x = i => (i / (hs.length - 1)) * 600;
+  const y = v => 178 - Math.max(0, Math.min(1, v)) * 172;
+  const path = fn => hs.map((h,i) => `${i?'L':'M'}${x(i).toFixed(1)},${y(fn(h)).toFixed(1)}`).join(' ');
+  svg.innerHTML =
+    `<path d="${path(h => h.reputation)}" fill="none" stroke="#2ec4b6" stroke-width="1.8" vector-effect="non-scaling-stroke"/>
+     <path d="${path(h => h.score)}" fill="none" stroke="#3498db" stroke-width="1.8" vector-effect="non-scaling-stroke"/>
+     <path d="${path(h => h.n_closed / maxN)}" fill="none" stroke="#e67e22" stroke-width="1.2"
+       stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>`;
+  $('evorange').innerHTML = `<b class="addr">${esc(short(wallet))}</b> · ${hs.length} pasadas · ` +
+    `${hhmm(hs[0].ts)} → ${hhmm(hs[hs.length-1].ts)}`;
+}
+
+/* -------- 7 · importancia de features -------- */
+async function loadImportance() {
+  let rows;
+  try { rows = await api('/wallets/feature-importance'); } catch { return; }
+  if (!rows || !rows.length) {
+    $('impbox').innerHTML = '<div class="empty">sin datos todavía ' +
+      '(hacen falta al menos 3 wallets perfiladas)</div>';
+    return;
+  }
+  const max = Math.max(...rows.map(r => r.importance), 1e-9);
+  $('impbox').innerHTML = rows.map(r => `
+    <div class="barrow" title="${esc(defs[r.feature] || '')}">
+      <span class="nm">${esc(r.feature)}${r.in_score ? ' <span class="pill">score</span>' : ''}</span>
+      <span class="track"><div style="left:0;width:${(r.importance/max*100).toFixed(1)}%;
+        background:var(--purple)"></div></span>
+      <span class="n">${num(r.importance,4)}</span>
+    </div>`).join('') +
+    `<div class="note">
+      <b>importancia = dispersión × asociación.</b> «Dispersión» = si la métrica separa a unas
+      wallets de otras; «asociación» = |correlación| con el ROI reciente. Una métrica que vale lo
+      mismo para todo el mundo sale con importancia 0: no puede estar explicando nada.<br>
+      <b>Qué NO es esto:</b> no es causalidad ni poder predictivo. No hay validación fuera de
+      muestra, no se controla por categoría ni por precio, y el objetivo forma parte del propio
+      ADN. Sirve para decidir <b>qué mirar</b>, jamás para justificar una operación.
+    </div>`;
+}
+
+/* -------- selección + acciones -------- */
+function selectWallet(w) {
+  selected = w;
+  loadDNA(w); loadSimilar(w); loadEvolution(w);
+}
+
+$('buildbtn').onclick = async () => {
+  const b = $('buildbtn');
+  b.disabled = true; b.textContent = 'Perfilando…';
+  try {
+    const r = await api('/wallets/build', {method:'POST'});
+    banner('lock', `✅ ${r.wallets_profiled} wallets perfiladas en ${r.build_seconds}s ` +
+      `(${r.positions} posiciones, ${r.clusters} clusters, ${r.similarity_pairs} pares).`);
+  } catch (e) {
+    banner('err', 'No se pudieron construir los perfiles: ' + esc(e.message));
+  }
+  b.disabled = false; b.textContent = 'Recalcular perfiles';
+  refresh();
+};
+
+['orderby','minclosed'].forEach(id => $(id).onchange = loadExplorer);
+$('q').oninput = () => { clearTimeout(window._t); window._t = setTimeout(loadExplorer, 350); };
+
+function refresh() {
+  loadStats(); loadExplorer(); loadReputation(); loadClusters(); loadImportance();
+  if (selected) selectWallet(selected);
+}
+loadInfo().then(refresh);
+// El perfilado corre como mucho cada hora: refrescar cada 60 s sobra.
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>

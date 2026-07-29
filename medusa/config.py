@@ -141,6 +141,78 @@ class Settings(BaseSettings):
     # en disco en db_models.FeatureRow.
     feature_retention_days: int = 365
 
+    # ---- Wallet Intelligence (medusa.intelligence.wallet) ----
+    # Perfilado NUMERICO de wallets publicas de Polymarket: 19 metricas (ADN),
+    # score relativo a la poblacion, reputacion, clusters y similitud.
+    # NO ES COPY TRADING: produce FEATURES, jamas ordenes. Ninguna funcion del
+    # paquete devuelve un lado, un tamaño ni un precio.
+    # Apagado por defecto, como toda pieza nueva.
+    wallet_intel_enabled: bool = False
+    # Cada cuanto recalcula el loop del engine. La reputacion de una wallet se
+    # mueve en dias: recalcularla cada minuto solo gasta Data API.
+    wallet_intel_interval: float = 3600.0
+    wallet_intel_timeout: float = 300.0
+    # Tamaño de la poblacion. El ADN se estandariza CONTRA ESTA POBLACION, asi
+    # que cambiar estos topes cambia el significado de los scores: no es solo
+    # una cuestion de coste.
+    wallet_max_markets: int = 25          # mercados de los que se descubren wallets
+    wallet_holders_per_market: int = 50   # holders que se piden por mercado
+    wallet_max_wallets: int = 200         # tope duro de wallets perfiladas
+    wallet_min_holder_size: float = 0.0   # ignora polvo al descubrir
+    wallet_max_positions: int = 500       # posiciones por wallet
+    wallet_max_activity: int = 500        # eventos de actividad por wallet
+    # Ventanas de las metricas temporales.
+    wallet_recent_days: float = 30.0      # que cuenta como "reciente" (roi_recent, decay)
+    wallet_half_life_days: float = 30.0   # semivida de `freshness`
+    wallet_bucket_days: int = 7           # cubo temporal de alpha/beta
+    # Muestra minima antes de creerse una reputacion. Alineado con
+    # ALLOC_MIN_SAMPLES: no puede haber dos definiciones de "hay muestra".
+    wallet_min_samples: int = 30
+    # Clustering (k-means determinista) y similitud (coseno).
+    wallet_clusters_k: int = 5
+    wallet_min_cluster_wallets: int = 6   # por debajo de esto no se agrupa nada
+    wallet_min_similarity: float = 0.70
+    wallet_similarity_top_k: int = 5
+    # Cuantos mercados enriquece el modulo del Intelligence Layer por pasada.
+    wallet_feature_max_markets: int = 15
+    # Poda del historico y de las pasadas. Los PERFILES no se podan.
+    wallet_retention_days: int = 365
+
+    # ---- Market Intelligence Graph (MIG) ----
+    # Grafo de relaciones entre entidades de Medusa (mercados, categorias,
+    # series, estrategias, trades, resoluciones, features, experimentos).
+    # SOLO PostgreSQL, sin Neo4j. NO opera, NO emite señales, NO toca el Risk
+    # Manager: su producto son nodos, aristas y objetos de inteligencia
+    # (Discovery) que algun dia PODRAN convertirse en Features.
+    # Apagado por defecto: igual que el Intelligence Layer, toda pieza nueva es
+    # opt-in y el runtime debe correr exactamente igual sin ella.
+    mig_enabled: bool = False
+    # Cada cuanto se reconstruye el grafo. Una hora es de sobra: las relaciones
+    # que describe (especialidad de una estrategia, series de eventos, clusters
+    # de mercados) cambian en dias, no en minutos.
+    mig_interval: float = 3600.0
+    # Presupuesto de tiempo de una construccion. Si se pasa, se corta y se
+    # registra: el MIG jamas puede arrastrar al engine.
+    mig_timeout: float = 120.0
+    # Muestras minimas para que una celda (estrategia x categoria) emita
+    # veredicto. Mismo umbral que el asignador de capital a proposito: no puede
+    # haber dos definiciones distintas de "hay muestra suficiente".
+    mig_min_samples: int = 30
+    # Observaciones minimas para afirmar una asociacion de una feature.
+    mig_min_observations: int = 20
+    # Similitud (Jaccard sobre las palabras de la pregunta) minima para unir dos
+    # mercados con `similar_to`. Bajarlo hace que todo se parezca con todo.
+    mig_min_similarity: float = 0.35
+    # Topes de la ventana de datos por construccion. Existen para no cargar
+    # meses de historia en los 3 GB del CT202; acotan, no falsean.
+    mig_max_markets: int = 300
+    mig_max_signals: int = 5000
+    mig_max_trades: int = 2000
+    mig_max_features: int = 5000
+    # Poda de descubrimientos y snapshots. Nodos y aristas NO se podan: son el
+    # grafo, y perderlos rompe el `first_seen` del que sale el crecimiento.
+    mig_retention_days: int = 365
+
     # ---- Micro-trader "Up or Down" 5 min (medusa.updown) ----
     # Subsistema desacoplado para las ventanas cripto de 5 min de Polymarket
     # (bnb-updown-5m-*). Apagado por defecto: encenderlo NO cambia nada del

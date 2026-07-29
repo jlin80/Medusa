@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Medusa · Research Lab</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#121820; --panel-2:#171f2a; --line:#243040;
+      --txt:#e6edf3; --muted:#8b9bb0; --accent:#2ec4b6; --accent-2:#3498db;
+      --green:#2ecc71; --red:#e74c3c; --orange:#e67e22; --purple:#9b59b6;
+      --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--txt);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:16px}
+    a{color:var(--accent);text-decoration:none}
+    a:hover{text-decoration:underline}
+    .wrap{max-width:1500px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+
+    .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+      background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+    .brand{font-size:19px;font-weight:700;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+    .brand small{color:var(--muted);font-weight:400;font-size:12px;letter-spacing:0}
+    .spacer{flex:1}
+    .chip{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
+      padding:5px 12px;font-size:12px;color:var(--muted);white-space:nowrap}
+    .chip b{color:var(--txt)}
+
+    button{background:var(--panel-2);color:var(--txt);border:1px solid var(--line);
+      border-radius:8px;padding:7px 13px;cursor:pointer;font-size:13px;transition:.15s}
+    button:hover{border-color:var(--accent)}
+    button:disabled{opacity:.4;cursor:not-allowed}
+
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+    .card .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+    .card .v{font-size:21px;font-weight:700;margin-top:4px;font-family:var(--mono)}
+
+    *{scrollbar-width:thin;scrollbar-color:#2b3646 transparent}
+    ::-webkit-scrollbar{width:9px;height:9px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#2b3646;border-radius:999px;
+      border:2px solid transparent;background-clip:padding-box}
+
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    @media(max-width:1100px){.grid{grid-template-columns:1fr}}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+      display:flex;flex-direction:column}
+    .phead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);
+      background:var(--panel-2);flex-wrap:wrap}
+    .phead h2{font-size:13px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--muted)}
+    .pbody{padding:12px 14px;overflow:auto;max-height:380px}
+
+    table{width:100%;border-collapse:collapse;font-size:12.5px}
+    th{text-align:left;color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;
+      padding:6px 8px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+    td{padding:6px 8px;border-bottom:1px solid #1b2430;font-family:var(--mono);font-size:12px;vertical-align:top}
+    tr:last-child td{border-bottom:none}
+    .q{font-family:inherit}
+    .empty{color:var(--muted);text-align:center;padding:24px;font-size:13px}
+
+    /* barras de conteo por tipo */
+    .barrow{display:flex;align-items:center;gap:9px;padding:5px 0}
+    .barrow .nm{width:130px;font-size:12px;color:var(--muted)}
+    .barrow .track{flex:1;height:8px;background:#1b2430;border-radius:999px;overflow:hidden}
+    .barrow .track>div{height:100%;border-radius:999px;transition:width .4s}
+    .barrow .n{width:60px;text-align:right;font-family:var(--mono);font-size:12px}
+
+    .banner{border-radius:8px;padding:9px 12px;font-size:12.5px;margin-bottom:11px;line-height:1.45}
+    .banner.lock{background:#12211f;border:1px solid #1e4d46;color:#8fe3d8}
+    .banner.warn{background:#241a10;border:1px solid #5b452b;color:#ffce9c}
+    .banner.err{background:#241414;border:1px solid #5b2b2b;color:#ff9c9c}
+    .note{color:#8b9bb0;font-size:11.5px;margin-top:10px;line-height:1.6}
+    .kind{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;
+      border:1px solid var(--line);color:var(--muted)}
+    .foot{color:#4a5a6e;font-size:11px;text-align:center;padding:4px 0 10px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">🕸️ RESEARCH LAB <small>Market Intelligence Graph</small></div>
+    <span class="chip">Motor <b>PostgreSQL</b></span>
+    <span class="chip" id="engstate">—</span>
+    <div class="spacer"></div>
+    <a href="/index.html"><button>← Volver al panel</button></a>
+    <a href="/wallets.html"><button>👛 Wallets</button></a>
+    <button id="buildbtn">Reconstruir grafo</button>
+  </div>
+
+  <div id="alert"></div>
+
+  <!-- estadisticas del grafo -->
+  <div class="cards" id="cards"></div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="phead"><h2>Nodos por tipo</h2><div class="spacer"></div>
+        <span class="chip" id="nodetot">—</span></div>
+      <div class="pbody" id="nodebox" style="max-height:none"><div class="empty">cargando…</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="phead"><h2>Aristas por relación</h2><div class="spacer"></div>
+        <span class="chip" id="edgetot">—</span></div>
+      <div class="pbody" id="edgebox" style="max-height:none"><div class="empty">cargando…</div></div>
+    </div>
+  </div>
+
+  <!-- crecimiento -->
+  <div class="panel">
+    <div class="phead"><h2>Crecimiento del grafo</h2><div class="spacer"></div>
+      <span class="chip" id="growthrange">—</span></div>
+    <div class="pbody" style="max-height:none">
+      <svg id="growthchart" viewBox="0 0 600 180" preserveAspectRatio="none"
+           style="width:100%;height:180px"></svg>
+      <div class="note">
+        <span style="color:var(--accent)">■</span> nodos ·
+        <span style="color:var(--accent-2)">■</span> aristas — una muestra por
+        reconstrucción. El grafo <b>acumula</b>: los nodos y las aristas no se podan,
+        así que esta curva mide conocimiento nuevo, no repetición.
+      </div>
+    </div>
+  </div>
+
+  <!-- descubrimientos -->
+  <div class="panel">
+    <div class="phead"><h2>Últimos descubrimientos</h2><div class="spacer"></div>
+      <span class="chip" id="disctot">—</span></div>
+    <div class="pbody" id="discbox"><div class="empty">cargando…</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="phead"><h2>Nodos más recientes</h2></div>
+    <div class="pbody" id="latestbox"><div class="empty">cargando…</div></div>
+  </div>
+
+  <div class="foot">
+    El MIG describe relaciones. No opera, no emite señales y no toca el Risk Manager.
+  </div>
+</div>
+
+<script>
+const API = '/api';
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hhmm = ts => { try { return new Date(ts).toLocaleString('es-ES',{hour12:false}); } catch { return '—'; } };
+
+// Un color por tipo de nodo y por relación: leer el grafo de un vistazo es
+// justo lo que hace útil esta página.
+const NODE_COLOR = {
+  market:'#2ec4b6', category:'#3498db', event:'#9b59b6', strategy:'#e67e22',
+  trade:'#2ecc71', outcome:'#e74c3c', feature:'#f1c40f', experiment:'#1abc9c',
+  wallet:'#95a5a6',
+};
+const EDGE_COLOR = {
+  belongs_to:'#3498db', participated_in:'#e67e22', predicted:'#9b59b6',
+  won:'#2ecc71', lost:'#e74c3c', specialized_in:'#2ec4b6', similar_to:'#f1c40f',
+  supports:'#1abc9c', contradicts:'#e74c3c', preceded:'#7f8c8d', followed:'#7f8c8d',
+};
+
+async function api(path, opts) {
+  const r = await fetch(API + path, opts);
+  if (!r.ok) {
+    let detail = r.statusText;
+    try { detail = (await r.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return r.json();
+}
+
+function banner(kind, html) { $('alert').innerHTML = `<div class="banner ${kind}">${html}</div>`; }
+
+function bars(counts, colors, box) {
+  const entries = Object.entries(counts || {}).sort((a,b) => b[1]-a[1]);
+  if (!entries.length) { box.innerHTML = '<div class="empty">el grafo está vacío</div>'; return 0; }
+  const max = entries[0][1] || 1;
+  const total = entries.reduce((s,[,n]) => s+n, 0);
+  box.innerHTML = entries.map(([k,n]) => `
+    <div class="barrow">
+      <span class="nm">${esc(k)}</span>
+      <span class="track"><div style="width:${(n/max*100).toFixed(1)}%;
+        background:${colors[k] || 'var(--muted)'}"></div></span>
+      <span class="n">${n.toLocaleString('es-ES')}</span>
+    </div>`).join('');
+  return total;
+}
+
+async function loadInfo() {
+  try {
+    const info = await api('/mig/info');
+    $('engstate').innerHTML = info.enabled
+      ? '<span style="color:var(--green)">■</span> construcción automática activa'
+      : '<span style="color:var(--orange)">■</span> automático apagado (MIG_ENABLED=false)';
+    if (!info.enabled) {
+      banner('lock', '🔒 <b>El MIG está apagado en el .env</b> (MIG_ENABLED=false): el grafo ' +
+        'no se reconstruye solo. Puedes construirlo a mano con «Reconstruir grafo» — es una ' +
+        'operación de lectura sobre los datos de trading que solo escribe en las tablas del grafo.');
+    }
+  } catch (e) {
+    $('engstate').textContent = 'API no disponible';
+    banner('err', 'No se pudo hablar con la API: ' + esc(e.message));
+  }
+}
+
+async function loadStats() {
+  let st;
+  try { st = await api('/mig/stats'); } catch { return; }
+  const build = st.last_build || {};
+  const cards = [
+    ['Nodos', (st.nodes||0).toLocaleString('es-ES')],
+    ['Aristas', (st.edges||0).toLocaleString('es-ES')],
+    ['Tipos de nodo', String(Object.keys(st.node_counts||{}).length)],
+    ['Tipos de relación', String(Object.keys(st.edge_counts||{}).length)],
+    ['Densidad', (st.density||0).toExponential(2)],
+    ['Última construcción', build.ts ? hhmm(build.ts) : '—'],
+    ['Duración', build.build_seconds != null ? build.build_seconds.toFixed(2)+'s' : '—'],
+    ['Primer nodo visto', st.first_seen ? hhmm(st.first_seen) : '—'],
+  ];
+  $('cards').innerHTML = cards.map(([k,v]) =>
+    `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+
+  const nTot = bars(st.node_counts, NODE_COLOR, $('nodebox'));
+  const eTot = bars(st.edge_counts, EDGE_COLOR, $('edgebox'));
+  $('nodetot').innerHTML = `<b>${nTot.toLocaleString('es-ES')}</b> nodos`;
+  $('edgetot').innerHTML = `<b>${eTot.toLocaleString('es-ES')}</b> aristas`;
+}
+
+async function loadGrowth() {
+  let pts;
+  try { pts = await api('/mig/growth?limit=200'); } catch { return; }
+  const svg = $('growthchart');
+  if (!pts || pts.length < 2) {
+    svg.innerHTML = '<text x="300" y="95" fill="#8b9bb0" font-size="12" text-anchor="middle">' +
+      'hacen falta al menos dos construcciones para dibujar la curva</text>';
+    $('growthrange').textContent = (pts && pts.length ? pts.length : 0) + ' construcciones';
+    return;
+  }
+  const hi = Math.max(...pts.map(p => Math.max(p.nodes, p.edges))) || 1;
+  const x = i => (i / (pts.length - 1)) * 600;
+  const y = v => 178 - (v / hi) * 172;
+  const path = key => pts.map((p,i) => `${i?'L':'M'}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join(' ');
+  svg.innerHTML =
+    `<path d="${path('nodes')}" fill="none" stroke="#2ec4b6" stroke-width="1.8" vector-effect="non-scaling-stroke"/>
+     <path d="${path('edges')}" fill="none" stroke="#3498db" stroke-width="1.8" vector-effect="non-scaling-stroke"/>`;
+  $('growthrange').textContent =
+    `${pts.length} construcciones · ${hhmm(pts[0].ts)} → ${hhmm(pts[pts.length-1].ts)}`;
+}
+
+async function loadDiscoveries() {
+  let ds;
+  try { ds = await api('/mig/discoveries?limit=60'); } catch { return; }
+  if (!ds.length) {
+    $('discbox').innerHTML = '<div class="empty">todavía no hay descubrimientos ' +
+      '(hacen falta señales resueltas y mercados relacionados)</div>';
+    $('disctot').textContent = '0';
+    return;
+  }
+  $('disctot').innerHTML = `<b>${ds.length}</b> patrones`;
+  $('discbox').innerHTML = `
+    <table><thead><tr><th>Tipo</th><th>Sujeto</th><th>Hallazgo</th><th>Score</th>
+      <th>Valor</th><th>Feature propuesta</th><th>Visto</th></tr></thead><tbody>
+    ${ds.map(d => `<tr>
+      <td><span class="kind">${esc(d.kind)}</span></td>
+      <td>${esc(d.subject)}</td>
+      <td class="q">${esc(d.statement)}</td>
+      <td><b>${(d.score ?? 0).toFixed(2)}</b></td>
+      <td>${(d.value ?? 0).toFixed(3)}</td>
+      <td style="color:var(--muted)">${esc(d.feature_name)}</td>
+      <td style="color:#4a5a6e">${hhmm(d.ts)}</td></tr>`).join('')}
+    </tbody></table>
+    <div class="note">
+      <b>Qué es un descubrimiento y qué no.</b> Es un patrón leído del grafo con su
+      evidencia y su tamaño de muestra. <b>No es una señal</b> (no tiene lado ni precio),
+      <b>no es una feature</b> (nada de esto se escribe en el Feature Store ni lo ve una
+      estrategia) y <b>no es un edge demostrado</b>: nada ha pasado un contraste fuera de
+      muestra. El <b>score</b> mide cuánta muestra y cuánta magnitud sostienen el patrón,
+      nunca rentabilidad. La columna «feature propuesta» es el nombre que tendría la
+      feature <i>si</i> algún día se decide crearla — el MIG no la crea.
+    </div>`;
+}
+
+async function loadLatest() {
+  let ns;
+  try { ns = await api('/mig/nodes?limit=40'); } catch { return; }
+  if (!ns.length) { $('latestbox').innerHTML = '<div class="empty">sin nodos</div>'; return; }
+  $('latestbox').innerHTML = `
+    <table><thead><tr><th>Tipo</th><th>Clave</th><th>Etiqueta</th><th>Peso</th>
+      <th>Visto por primera vez</th></tr></thead><tbody>
+    ${ns.map(n => `<tr>
+      <td><span class="kind" style="border-color:${NODE_COLOR[n.node_type] || 'var(--line)'};
+        color:${NODE_COLOR[n.node_type] || 'var(--muted)'}">${esc(n.node_type)}</span></td>
+      <td>${esc(n.key)}</td>
+      <td class="q">${esc((n.label || '').slice(0,110))}</td>
+      <td>${(n.weight ?? 0).toFixed(3)}</td>
+      <td style="color:#4a5a6e">${hhmm(n.first_seen)}</td></tr>`).join('')}
+    </tbody></table>`;
+}
+
+$('buildbtn').onclick = async () => {
+  const btn = $('buildbtn');
+  btn.disabled = true; btn.textContent = 'Construyendo…';
+  try {
+    const r = await api('/mig/build', {method:'POST'});
+    banner('lock', `✅ Grafo reconstruido en ${r.build_seconds}s: ` +
+      `<b>${r.stats.nodes}</b> nodos, <b>${r.stats.edges}</b> aristas, ` +
+      `<b>${r.discoveries}</b> descubrimientos.`);
+  } catch (e) {
+    banner('err', 'No se pudo construir el grafo: ' + esc(e.message));
+  }
+  btn.disabled = false; btn.textContent = 'Reconstruir grafo';
+  refresh();
+};
+
+function refresh() { loadStats(); loadGrowth(); loadDiscoveries(); loadLatest(); }
+loadInfo(); refresh();
+// El grafo se reconstruye como mucho cada hora: refrescar cada 60 s sobra.
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>
