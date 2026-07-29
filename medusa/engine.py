@@ -478,9 +478,24 @@ class Engine:
 
     # --------------------------------------------------------------- bucles --
     async def _heartbeat_loop(self) -> None:
+        """Late cada `heartbeat_interval`. Es lo unico que distingue, desde
+        fuera, un engine vivo de uno muerto.
+
+        Un fallo puntual de Redis NO puede saltarse el latido siguiente: se
+        registra y se sigue latiendo. `_guarded` reiniciaria el loop de todos
+        modos, pero absorber el parpadeo aqui evita perder el latido y evita
+        que un blip de la red genere una alerta de "loop muerto" que no
+        describe nada real. (Bug del 2026-07-29: un unico "Timeout reading from
+        redis:6379" dejo al engine nueve horas sin latir.)
+        """
         while not self._stop.is_set():
-            await state.set_heartbeat(time.time())
-            await events.publish(events.CH_HEARTBEAT, {"ts": time.time()})
+            try:
+                await state.set_heartbeat(time.time())
+                await events.publish(events.CH_HEARTBEAT, {"ts": time.time()})
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - el latido no puede pararse por un blip
+                self.log.warning("engine.heartbeat_failed", error=err(exc))
             await self._sleep(self.settings.heartbeat_interval)
 
     async def _trading_loop(self) -> None:
@@ -655,26 +670,84 @@ class Engine:
         except asyncio.TimeoutError:
             pass
 
-    async def _guarded(self, loop_fn, name: str) -> None:
-        """Corre un loop de forma que su muerte NO tumbe el proceso entero.
+    # Reintento de un loop caido: espera inicial, techo, y cuanto tiene que
+    # haber aguantado para considerar que el fallo fue puntual y no un bucle de
+    # arranque roto.
+    LOOP_RETRY_BACKOFF = 5.0
+    LOOP_RETRY_MAX = 300.0
+    LOOP_HEALTHY_AFTER = 300.0
+    # Anti-ruido: no se repite la alerta de Discord de un mismo loop mas a
+    # menudo que esto (el log estructurado si sale en cada reintento).
+    LOOP_ALERT_EVERY = 1800.0
 
-        asyncio.gather propaga la primera excepcion y cancela el resto: sin esto,
-        un fallo no capturado en CUALQUIER loop mata el engine y, con
-        restart:unless-stopped, lo mete en un crash-loop de arranque. Aqui cada
-        loop se aisla: si revienta, se registra a lo grande y se avisa por
-        Discord, pero los demas siguen vivos (el watchdog de la API avisara si el
-        que murio fue el heartbeat)."""
-        try:
-            await loop_fn()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - un loop no puede tumbar el engine
-            self.log.error("engine.loop_crashed", loop=name, error=err(exc), exc_info=True)
+    async def _guarded(self, loop_fn, name: str) -> None:
+        """Corre un loop aislado y lo REINICIA si se cae.
+
+        asyncio.gather propaga la primera excepcion y cancela el resto: sin este
+        envoltorio, un fallo no capturado en CUALQUIER loop mata el engine y, con
+        restart:unless-stopped, lo mete en un crash-loop de arranque.
+
+        POR QUE ADEMAS REINICIA (bug real, medido en produccion el 2026-07-29):
+        antes esto capturaba la excepcion, la registraba... y RETORNABA. El loop
+        quedaba muerto para el resto de la vida del proceso. A las 09:14 UTC un
+        timeout transitorio de Redis ("Timeout reading from redis:6379") mato el
+        loop de heartbeat; el engine siguio escaneando y operando con
+        normalidad durante NUEVE HORAS, pero sin latir. Consecuencias:
+
+          - el watchdog de la API grito "CAIDA DEL SERVICIO" cada 30 min sobre un
+            servicio que estaba perfectamente vivo, y
+          - lo mas grave: una caida REAL habria sido indistinguible de esa falsa
+            alarma. Una alarma que lleva nueve horas mintiendo ya no es alarma.
+
+        Y el heartbeat era el caso benigno: el mismo fallo en `_trading_loop`
+        habria dejado de vigilar las posiciones abiertas EN SILENCIO, que es
+        justo el escenario que el diseño del engine existe para evitar.
+
+        El backoff crece hasta el techo para no castigar a un servicio que esta
+        caido de verdad, y se reinicia a la espera inicial cuando el loop ha
+        aguantado lo suficiente: un fallo puntual tras horas sanas no puede
+        heredar el castigo de una racha vieja.
+        """
+        backoff = self.LOOP_RETRY_BACKOFF
+        last_alert = 0.0
+        attempt = 0
+
+        while not self._stop.is_set():
+            started = time.time()
             try:
-                await events.publish_log(LogType.ERROR, f"Loop '{name}' murio: {exc}")
-                await self.notifier.error(f"Loop '{name}' murio", str(exc))
-            except Exception:  # noqa: BLE001
-                pass
+                await loop_fn()
+                # Retorno limpio = el loop decidio terminar (p.ej. un subsistema
+                # apagado por config). Eso NO es una caida y no se reintenta.
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - un loop no puede tumbar el engine
+                attempt += 1
+                alive_for = time.time() - started
+                if alive_for >= self.LOOP_HEALTHY_AFTER:
+                    backoff = self.LOOP_RETRY_BACKOFF   # venia sano: fallo puntual
+                self.log.error(
+                    "engine.loop_crashed", loop=name, error=err(exc), attempt=attempt,
+                    alive_seconds=round(alive_for, 1), retry_in=backoff, exc_info=True,
+                )
+                if self._stop.is_set():
+                    return
+                try:
+                    await events.publish_log(
+                        LogType.ERROR,
+                        f"Loop '{name}' murio ({exc}). Reintento #{attempt} en "
+                        f"{backoff:.0f}s.",
+                    )
+                    if time.time() - last_alert >= self.LOOP_ALERT_EVERY:
+                        await self.notifier.error(
+                            f"Loop '{name}' murio",
+                            f"{exc}. Se reintenta en {backoff:.0f}s (intento #{attempt}).",
+                        )
+                        last_alert = time.time()
+                except Exception:  # noqa: BLE001 - avisar jamas puede impedir reintentar
+                    pass
+                await self._sleep(backoff)
+                backoff = min(backoff * 2, self.LOOP_RETRY_MAX)
 
     async def run(self) -> None:
         await self.startup()
