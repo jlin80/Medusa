@@ -38,6 +38,7 @@ from medusa.execution.reconcile import Reconciler
 from medusa.infra.db import check_db, dispose, init_db
 from medusa.infra.redis_bus import check_redis, close
 from medusa.intelligence.flow import InformationFlowService
+from medusa.intelligence.hypothesis import HypothesisService
 from medusa.intelligence.mig import MIGService
 from medusa.intelligence.wallet import WalletIntelligenceService
 from medusa.intelligence_layer import IntelligenceRunner, build_default_modules
@@ -102,6 +103,11 @@ class Engine:
         # Mide PROPAGACION, jamas causalidad. No opera, no emite señales y su
         # loop es independiente. Apagado por defecto.
         self.flow = InformationFlowService(log, events.publish_log)
+        # Hypothesis Engine: GENERA hipotesis de investigacion a partir de los
+        # datos observados y las valida con datos que no pudo ver. Ninguna
+        # hipotesis esta escrita en el codigo. Observa asociacion, jamas
+        # causalidad; no opera y no emite señales. Apagado por defecto.
+        self.hypotheses = HypothesisService(log, events.publish_log)
 
     def adapter_for(self, mode: Mode):
         return self._live if mode == Mode.LIVE else self._paper
@@ -641,6 +647,46 @@ class Engine:
                      "markets": summary["markets_scanned"]},
                 )
 
+    async def _hypothesis_loop(self) -> None:
+        """Loop del Hypothesis Engine, INDEPENDIENTE del de trading.
+
+        No habla con la red: lee tablas propias y ajenas y escribe en las suyas
+        (`hyp_*`). Aun asi va en su propio task y con timeout, como el resto de la
+        capa de inteligencia: nada que no sea proteger o abrir posiciones puede
+        meterse en el camino del ciclo de trading.
+
+        El motor produce HIPOTESIS con su intervalo de confianza, nunca ordenes ni
+        señales, y observa asociacion, jamas causalidad. Si el flag esta apagado
+        (default) este loop no hace absolutamente nada.
+        """
+        if not self.hypotheses.enabled:
+            self.log.info("hypothesis.disabled")
+            return
+        self.log.info("hypothesis.enabled",
+                      interval=self.settings.hypothesis_interval)
+        while not self._stop.is_set():
+            await self._sleep(self.settings.hypothesis_interval)
+            if self._stop.is_set():
+                break
+            # run_guarded ya absorbe timeout y errores; este loop no puede tener
+            # otra forma de morir.
+            summary = await self.hypotheses.run_guarded()
+            if summary:
+                board = summary["board"]
+                await events.publish_log(
+                    LogType.INFO,
+                    f"Hypothesis Engine: {summary['new_proposals']} hipotesis "
+                    f"nuevas y {summary['transitions']} transiciones sobre "
+                    f"{summary['tested']} contrastes "
+                    f"({board.get('validated', 0)} validadas, "
+                    f"{board.get('rejected', 0)} rechazadas)",
+                    {"new_proposals": summary["new_proposals"],
+                     "transitions": summary["transitions"],
+                     "tested": summary["tested"],
+                     "validated": board.get("validated", 0),
+                     "rejected": board.get("rejected", 0)},
+                )
+
     async def _updown_loop(self) -> None:
         """Loop del micro-trader 'Up or Down', INDEPENDIENTE del ciclo de trading.
 
@@ -709,6 +755,13 @@ class Engine:
                     flow_pruned = await self.flow.prune()
                     if any(flow_pruned.values()):
                         self.log.info("engine.pruned_flow", **flow_pruned)
+                # Hypothesis Engine: se podan snapshots y observaciones viejas.
+                # Las HIPOTESIS no se podan jamas -- una rechazada de hace un año
+                # es justo lo que impide volver a proponerla -- ni su expediente.
+                if self.hypotheses.enabled:
+                    hyp_pruned = await self.hypotheses.prune()
+                    if any(hyp_pruned.values()):
+                        self.log.info("engine.pruned_hypotheses", **hyp_pruned)
             except Exception as exc:  # noqa: BLE001
                 self.log.warning("engine.prune_failed", error=err(exc))
 
@@ -810,6 +863,7 @@ class Engine:
                 self._guarded(self._mig_loop, "mig"),
                 self._guarded(self._wallet_loop, "wallet"),
                 self._guarded(self._flow_loop, "flow"),
+                self._guarded(self._hypothesis_loop, "hypothesis"),
             )
         finally:
             await self.shutdown()
@@ -834,6 +888,10 @@ class Engine:
             await self.flow.close()
         except Exception as exc:  # noqa: BLE001
             self.log.warning("flow.close_failed", error=err(exc))
+        try:
+            await self.hypotheses.close()
+        except Exception as exc:  # noqa: BLE001
+            self.log.warning("hypothesis.close_failed", error=err(exc))
         await self.client.close()
         await close()
         await dispose()

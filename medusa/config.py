@@ -264,6 +264,71 @@ class Settings(BaseSettings):
     flow_retention_days: int = 365
     flow_trade_retention_days: int = 45
 
+    # ---- Hypothesis Engine (HE) ----
+    # GENERA hipotesis de investigacion a partir de los datos observados y las
+    # pone a prueba con datos que no pudo ver. Ninguna hipotesis esta escrita en
+    # el codigo: lo escrito es una gramatica de tres formas (monotona, contraste
+    # de grupos y umbral) y el lineage de las fuentes. Observa ASOCIACION, jamas
+    # causalidad. No opera, no emite señales y no toca el Risk Manager. Apagado
+    # por defecto, como toda pieza nueva.
+    hypothesis_enabled: bool = False
+    # Cada cuanto corre una pasada. Una hora: las fuentes que lo alimentan
+    # (señales resueltas, trades cerrados) producen casos nuevos en horas, no en
+    # minutos, y proponer mas a menudo no añadiria observaciones, solo contrastes.
+    hypothesis_interval: float = 3600.0
+    # Presupuesto de tiempo de una pasada. Si se pasa, se corta y se registra: el
+    # motor jamas puede arrastrar al engine.
+    hypothesis_timeout: float = 240.0
+    # Ventana de DESCUBRIMIENTO: de que historia reciente se proponen hipotesis
+    # nuevas. Corta a proposito -- una ventana de un año propondria relaciones de
+    # un regimen de mercado que ya no existe.
+    hypothesis_discovery_days: float = 30.0
+    # Ventana de ANALISIS completa: la que se usa para EVALUAR (necesita historia
+    # a los dos lados de la valla temporal de cada hipotesis).
+    hypothesis_lookback_days: float = 180.0
+    # Topes de lectura por pasada. Acotan la memoria en una maquina de 3 GB.
+    hypothesis_max_rows_per_source: int = 5000
+    hypothesis_max_observations: int = 50000
+    # Filtros de lo que llega a ser una VARIABLE. Una columna presente en menos de
+    # `min_coverage` de la ventana describe un subconjunto raro, no la ventana; una
+    # numerica con menos de `min_distinct` valores es una categorica disfrazada.
+    hypothesis_min_coverage: float = 0.6
+    hypothesis_min_distinct: int = 8
+    # Niveles maximos de una etiqueta y masa minima de un nivel para contrastarlo.
+    # Sin el tope, un `market_id` daria doscientos contrastes de un caso contra el
+    # mundo.
+    hypothesis_max_levels: int = 12
+    hypothesis_min_level_size: int = 15
+    # Observaciones minimas de la ventana para proponer algo.
+    hypothesis_min_discovery_samples: int = 40
+    # Tamaños minimos de efecto, uno por escala: rho para la forma monotona y d
+    # (diferencia estandarizada) para las de grupos y umbral. Bajarlos llena el
+    # tablero de relaciones ciertas y triviales.
+    hypothesis_min_effect_rho: float = 0.15
+    hypothesis_min_effect_d: float = 0.25
+    # FDR de Benjamini-Hochberg sobre TODOS los contrastes de la pasada. Es el
+    # filtro que impide que un motor que prueba cientos de relaciones publique
+    # decenas de hallazgos falsos cada hora.
+    hypothesis_alpha: float = 0.05
+    # Cuantil de la ventana que define el corte de la forma umbral. Se CONGELA en
+    # la hipotesis: recalcularlo sobre los datos de prueba seria elegir el corte
+    # que mejor queda en el test y llamarlo replicacion.
+    hypothesis_cut_quantile: float = 0.5
+    # Observaciones FUERA DE MUESTRA para emitir un veredicto, y a partir de
+    # cuantas la falta de efecto se lee como "no replica" en vez de "aun no se
+    # sabe". La segunda es alta a proposito: rechazar pronto por falta de datos
+    # tiraria hipotesis buenas por impaciencia.
+    hypothesis_min_test_samples: int = 60
+    hypothesis_reject_after: int = 200
+    # Topes del tablero. Sin ellos el motor propondria en cada pasada y acabaria
+    # con miles de enunciados en `proposed` que nadie va a leer.
+    hypothesis_max_proposals_per_source: int = 10
+    hypothesis_max_open_per_source: int = 60
+    # Poda. Las HIPOTESIS no se podan nunca (una rechazada de hace un año es justo
+    # lo que evita volver a proponerla); se podan snapshots y observaciones.
+    hypothesis_retention_days: int = 730
+    hypothesis_observation_retention_days: int = 365
+
     # ---- Micro-trader "Up or Down" 5 min (medusa.updown) ----
     # Subsistema desacoplado para las ventanas cripto de 5 min de Polymarket
     # (bnb-updown-5m-*). Apagado por defecto: encenderlo NO cambia nada del

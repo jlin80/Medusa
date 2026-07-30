@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Medusa · Hipótesis</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#121820; --panel-2:#171f2a; --line:#243040;
+      --txt:#e6edf3; --muted:#8b9bb0; --accent:#2ec4b6; --accent-2:#3498db;
+      --green:#2ecc71; --red:#e74c3c; --orange:#e67e22; --purple:#9b59b6;
+      --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--txt);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:16px}
+    a{color:var(--accent);text-decoration:none}
+    a:hover{text-decoration:underline}
+    .wrap{max-width:1280px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+
+    .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+      background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+    .brand{font-size:19px;font-weight:700;letter-spacing:.5px}
+    .brand small{color:var(--muted);font-weight:400;font-size:12px;letter-spacing:0}
+    .spacer{flex:1}
+    .chip{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
+      padding:5px 12px;font-size:12px;color:var(--muted);white-space:nowrap}
+    .chip b{color:var(--txt)}
+    button{background:var(--panel-2);color:var(--txt);border:1px solid var(--line);
+      border-radius:8px;padding:7px 13px;cursor:pointer;font-size:13px;transition:.15s}
+    button:hover{border-color:var(--accent)}
+
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+    .card .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+    .card .v{font-size:21px;font-weight:700;margin-top:4px;font-family:var(--mono)}
+    .card .s{color:#5b6b80;font-size:10.5px;margin-top:3px}
+
+    *{scrollbar-width:thin;scrollbar-color:#2b3646 transparent}
+    ::-webkit-scrollbar{width:9px;height:9px}
+    ::-webkit-scrollbar-thumb{background:#2b3646;border-radius:999px;
+      border:2px solid transparent;background-clip:padding-box}
+
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    @media(max-width:1000px){.grid{grid-template-columns:1fr}}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+      display:flex;flex-direction:column}
+    .phead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);
+      background:var(--panel-2);flex-wrap:wrap}
+    .phead h2{font-size:13px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--muted)}
+    .pbody{padding:12px 14px;overflow:auto}
+
+    table{width:100%;border-collapse:collapse;font-size:12.5px}
+    th{text-align:left;color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;
+      padding:6px 8px;border-bottom:1px solid var(--line)}
+    td{padding:7px 8px;border-bottom:1px solid #1b2430;font-size:12.5px}
+    td.m{font-family:var(--mono);font-size:12px}
+    tr:last-child td{border-bottom:none}
+    .empty{color:var(--muted);text-align:center;padding:24px;font-size:13px}
+    .note{color:#8b9bb0;font-size:11.5px;margin-top:10px;line-height:1.6}
+    .banner{border-radius:8px;padding:9px 12px;font-size:12.5px;margin-bottom:11px;line-height:1.45}
+    .banner.err{background:#241414;border:1px solid #5b2b2b;color:#ff9c9c}
+    .foot{color:#4a5a6e;font-size:11px;text-align:center;padding:4px 0 10px}
+
+    /* el enunciado, que es el producto del motor */
+    .statement{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+      padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+    .statement .txt{font-size:20px;line-height:1.4;font-weight:600}
+    .statement .row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+    .tag{border-radius:999px;padding:3px 10px;font-size:11px;font-family:var(--mono);
+      border:1px solid var(--line);background:#0f1620;color:var(--muted)}
+    .tag.form{color:#9fd0ff;border-color:#2a4361}
+    .tag.st{font-weight:700}
+
+    .epistemic{background:#1a1424;border:1px solid #43305e;color:#d9c7f0;
+      border-radius:10px;padding:11px 14px;font-size:12.5px;line-height:1.6}
+    .epistemic b{color:#f0e6ff}
+
+    /* LA VALLA: la pieza visual central de la pagina */
+    .fence{display:flex;align-items:stretch;gap:0;height:64px;border-radius:9px;overflow:hidden;
+      border:1px solid var(--line);font-family:var(--mono);font-size:11.5px}
+    .fence>div{display:flex;flex-direction:column;justify-content:center;padding:9px 13px;gap:3px}
+    .fence .before{background:#161c26;color:#6c7c90;flex:1}
+    .fence .post{width:3px;background:var(--orange);flex:none}
+    .fence .after{background:#0f1c1a;color:#8fe3d8;flex:1}
+    .fence .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.6px;opacity:.75}
+    .fence .big{font-size:17px;font-weight:700}
+
+    /* intervalo de confianza dibujado */
+    .ci{position:relative;height:26px;background:#141b25;border-radius:6px;overflow:hidden}
+    .ci .zero{position:absolute;top:0;bottom:0;width:1px;background:#5b6b80}
+    .ci .bar{position:absolute;top:9px;height:8px;border-radius:999px}
+    .ci .dot{position:absolute;top:7px;width:3px;height:12px;background:#fff;border-radius:2px}
+
+    .weak{color:#5b6b80}
+    .pos{color:var(--green)} .neg{color:var(--red)}
+    svg{display:block;width:100%;height:auto}
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">🔬 HIPÓTESIS <small id="hid">—</small></div>
+    <div class="spacer"></div>
+    <a href="/hypotheses.html"><button>← Tablero</button></a>
+    <a href="/flow.html"><button>🌊 Information Flow</button></a>
+    <a href="/index.html"><button>Panel</button></a>
+  </div>
+
+  <div id="alert"></div>
+  <div id="body"><div class="empty">cargando…</div></div>
+
+  <div class="foot">Hypothesis Engine · observa asociación, no causalidad · no opera, no emite señales</div>
+</div>
+
+<script>
+const API = '/api';
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hhmm = ts => { try { return new Date(ts).toLocaleString('es-ES',{hour12:false}); } catch { return '—'; } };
+const num = (v, d=2) => (v == null ? '—' : Number(v).toFixed(d));
+const nfmt = v => (v == null ? '—' : Number(v).toLocaleString('es-ES'));
+const sgn = (v, d=3) => (v == null ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(d));
+
+const STATUS = {
+  proposed:  {color:'#8b9bb0', hint:'Encontrada en los datos, pero sin una sola observación que el motor no hubiera visto ya. Por eso su confianza es 0.00: no es una hipótesis débil, es una hipótesis sin poner a prueba.'},
+  testing:   {color:'#3498db', hint:'Están llegando observaciones posteriores a su creación, pero todavía no bastan para un veredicto.'},
+  validated: {color:'#2ecc71', hint:'Replicó fuera de muestra: mismo signo, intervalo al margen del nulo y efecto por encima del mínimo. No es terminal — una muestra mayor que la contradiga puede tumbarla.'},
+  rejected:  {color:'#e74c3c', hint:'Contradicha (el signo se invirtió con significancia) o sin replicar con muestra de sobra. Es TERMINAL: no vuelve a proponerse ni aunque el generador la redescubra.'},
+};
+
+async function api(path) {
+  const r = await fetch(API + path);
+  if (!r.ok) {
+    let detail = r.statusText;
+    try { detail = (await r.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return r.json();
+}
+
+// Dibuja un intervalo de confianza con el cero marcado. La posicion del cero
+// dentro de la caja ES la pregunta: si queda dentro de la barra, la muestra no
+// sostiene ningun signo.
+function ciBar(est, color) {
+  if (!est || !est.n) return '<div class="weak" style="font-size:12px">sin datos</div>';
+  const lo = Number(est.lower), hi = Number(est.upper), ef = Number(est.effect);
+  const span = Math.max(Math.abs(lo), Math.abs(hi), 1e-9) * 1.15;
+  const pct = v => ((v + span) / (2 * span) * 100);
+  return `<div class="ci">
+    <div class="zero" style="left:50%"></div>
+    <div class="bar" style="left:${pct(lo).toFixed(2)}%;width:${(pct(hi)-pct(lo)).toFixed(2)}%;
+      background:${color};opacity:.42"></div>
+    <div class="dot" style="left:${pct(ef).toFixed(2)}%"></div>
+  </div>
+  <div class="weak" style="font-family:var(--mono);font-size:11px;margin-top:5px">
+    ${sgn(ef)} · IC95 [${sgn(lo)}, ${sgn(hi)}] · n=${nfmt(est.n)} ·
+    ${est.excludes_null ? '<span style="color:'+color+'">excluye el nulo</span>'
+                        : 'compatible con el nulo'}</div>`;
+}
+
+function render(d) {
+  const h = d.hypothesis, st = STATUS[h.status] || STATUS.proposed;
+  $('hid').textContent = h.id;
+  document.title = 'Medusa · ' + h.description;
+
+  const cards = [
+    ['Confianza', num(h.confidence), 'fuerza de la evidencia fuera de muestra'],
+    ['Muestra fuera de muestra', nfmt(h.sample_count), 'observaciones posteriores a la valla'],
+    ['Efecto (test)', h.test.n ? sgn(h.test.effect) : '—', 'la única evidencia que cuenta'],
+    ['Efecto (hallazgo)', sgn(h.discovery.effect), 'dentro de muestra: no es evidencia'],
+    ['Contrastes en su pasada', nfmt(h.tested_in_pass), 'el denominador de su significancia'],
+    ['Forma', h.form, 'de la gramática, no escrita a mano'],
+  ];
+
+  $('body').innerHTML = `
+  <div class="statement">
+    <div class="txt">${esc(h.description)}</div>
+    <div class="row">
+      <span class="tag st" style="color:${st.color};border-color:${st.color}55">${esc(h.status)}</span>
+      <span class="tag form">${esc(h.form)}</span>
+      <span class="tag">fuente: ${esc(h.source)}</span>
+      <span class="tag">predictor: ${esc(h.predictor)}${h.level ? ' = '+esc(h.level) : ''}</span>
+      <span class="tag">resultado: ${esc(h.outcome)}</span>
+      <span class="tag">dirección afirmada: ${h.direction > 0 ? '↑ positiva' : '↓ negativa'}</span>
+      ${h.params && h.params.cut != null ? `<span class="tag">corte congelado: ${num(h.params.cut,4)}</span>` : ''}
+    </div>
+    <div class="weak" style="font-size:12px;line-height:1.6">${esc(st.hint)}</div>
+  </div>
+
+  <div style="height:14px"></div>
+  <div class="cards">
+    ${cards.map(([k,v,s]) => `<div class="card"><div class="k">${k}</div>
+      <div class="v">${esc(String(v))}</div><div class="s">${s}</div></div>`).join('')}
+  </div>
+
+  <div style="height:14px"></div>
+  <div class="panel">
+    <div class="phead"><h2>La valla temporal</h2><div class="spacer"></div>
+      <span class="chip">creada el <b>${hhmm(h.created_at)}</b></span></div>
+    <div class="pbody">
+      <div class="fence">
+        <div class="before">
+          <span class="lbl">antes de la valla · descubrimiento</span>
+          <span class="big">n = ${nfmt(h.discovery.n)}</span>
+          <span>eligieron el enunciado · no cuentan como evidencia</span>
+        </div>
+        <div class="post" title="created_at"></div>
+        <div class="after">
+          <span class="lbl">después de la valla · prueba</span>
+          <span class="big">n = ${nfmt(h.sample_count)}</span>
+          <span>${h.sample_count ? 'la única evidencia del motor' : 'todavía no ha llegado ninguna'}</span>
+        </div>
+      </div>
+      <div class="note">
+        La línea naranja es <code>created_at</code>. Todo lo que quedó a su izquierda es lo que
+        <b>generó</b> la hipótesis, y por eso no puede confirmarla: son los mismos datos que
+        eligieron el enunciado entre cientos de candidatos. Sólo cuenta lo de la derecha.
+        ${h.first_tested_at ? `Primera observación nueva: <b>${hhmm(h.first_tested_at)}</b>.` : ''}
+        ${h.decided_at ? `Veredicto emitido: <b>${hhmm(h.decided_at)}</b>.` : ''}
+      </div>
+    </div>
+  </div>
+
+  <div style="height:14px"></div>
+  <div class="grid">
+    <div class="panel">
+      <div class="phead"><h2>Hallazgo (dentro de muestra)</h2></div>
+      <div class="pbody">${ciBar(h.discovery, '#8b9bb0')}
+        <div class="note">Lo que se midió en la ventana de descubrimiento. Se guarda para poder
+        comparar el hallazgo original con su replicación, y se congela: una pasada posterior
+        no lo reescribe.</div></div>
+    </div>
+    <div class="panel">
+      <div class="phead"><h2>Replicación (fuera de muestra)</h2></div>
+      <div class="pbody">${ciBar(h.test, st.color)}
+        <div class="note">Medido con la misma forma y los mismos parámetros congelados, sobre
+        observaciones que la hipótesis no pudo ver. Si el cero cae dentro de la barra, la
+        muestra no sostiene ningún signo — y la confianza vale 0.00 por eso.</div></div>
+    </div>
+  </div>
+
+  <div style="height:14px"></div>
+  <div class="panel">
+    <div class="phead"><h2>Estado actual, en palabras</h2></div>
+    <div class="pbody"><div style="font-size:13px;line-height:1.65">${esc(h.status_reason)}</div></div>
+  </div>
+
+  <div style="height:14px"></div>
+  <div class="panel">
+    <div class="phead"><h2>Curva de evidencia</h2><div class="spacer"></div>
+      <span class="chip">${d.evidence.length} puntos</span></div>
+    <div class="pbody">
+      <svg id="evchart" viewBox="0 0 600 160" preserveAspectRatio="none" style="height:160px"></svg>
+      <div class="note"><span style="color:#2ec4b6">■</span> confianza ·
+        <span style="color:#3498db">■</span> muestra fuera de muestra (escalada).
+        Una confianza que sube mientras la muestra crece es replicación. Una que baja
+        mientras la muestra crece es lo contrario, y es información igual de valiosa.</div>
+    </div>
+  </div>
+
+  <div style="height:14px"></div>
+  <div class="panel">
+    <div class="phead"><h2>Expediente</h2></div>
+    <div class="pbody">
+      ${d.transitions.length ? `<table><thead><tr><th>Cuándo</th><th>Cambio</th><th>n</th>
+        <th>Confianza</th><th>Motivo</th></tr></thead><tbody>
+        ${d.transitions.map(t => `<tr>
+          <td class="m weak">${hhmm(t.ts)}</td>
+          <td class="m"><span class="weak">${esc(t.from)}</span> →
+            <span style="color:${(STATUS[t.to]||STATUS.proposed).color}">${esc(t.to)}</span></td>
+          <td class="m">${t.sample_count}</td><td class="m">${num(t.confidence)}</td>
+          <td class="weak" style="font-size:11.5px">${esc(t.reason)}</td></tr>`).join('')}
+        </tbody></table>`
+      : '<div class="empty">todavía no ha cambiado de estado</div>'}
+    </div>
+  </div>
+
+  <div style="height:14px"></div>
+  <div class="epistemic">
+    <b>Qué NO dice esta página.</b> Que <i>${esc(h.predictor)}</i> y
+    <i>${esc(h.outcome)}</i> se muevan juntos no significa que uno cause al otro. No hay
+    contrafactual, no hay asignación aleatoria y no hay control de confusores: cualquier
+    tercera variable puede estar moviendo a las dos. Y <code>confidence</code> no es la
+    probabilidad de que la hipótesis sea cierta — es la fuerza de la evidencia fuera de
+    muestra, acotada en [0,1]: crece con el efecto que sostiene la cota inferior y con el
+    tamaño de la muestra, y vale 0.00 si el intervalo cruza el nulo o si el signo observado
+    es el contrario al afirmado.
+  </div>`;
+
+  drawEvidence(d.evidence);
+}
+
+function drawEvidence(pts) {
+  const svg = $('evchart');
+  if (!svg) return;
+  if (!pts || pts.length < 2) {
+    svg.innerHTML = '<text x="300" y="80" fill="#8b9bb0" font-size="12" text-anchor="middle">' +
+      'hacen falta al menos dos mediciones fuera de muestra</text>';
+    return;
+  }
+  const maxN = Math.max(1, ...pts.map(p => p.sample_count));
+  const x = i => (i / (pts.length - 1)) * 600;
+  const yc = v => 152 - Math.max(0, Math.min(1, v)) * 144;
+  const yn = v => 152 - (v / maxN) * 144;
+  const path = (fn, key) => pts.map((p,i) =>
+    `${i?'L':'M'}${x(i).toFixed(1)},${fn(p[key]).toFixed(1)}`).join(' ');
+  svg.innerHTML =
+    `<path d="${path(yn,'sample_count')}" fill="none" stroke="#3498db" stroke-width="1.6"
+       stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>
+     <path d="${path(yc,'confidence')}" fill="none" stroke="#2ec4b6" stroke-width="2"
+       vector-effect="non-scaling-stroke"/>`;
+}
+
+const id = new URLSearchParams(location.search).get('id');
+if (!id) {
+  $('body').innerHTML = '<div class="empty">falta el parámetro <code>?id=</code> — ' +
+    'vuelve al <a href="/hypotheses.html">tablero</a></div>';
+} else {
+  api('/hypotheses/' + encodeURIComponent(id))
+    .then(render)
+    .catch(e => {
+      $('alert').innerHTML = '<div class="banner err">No se pudo cargar la hipótesis: ' +
+        esc(e.message) + '</div>';
+      $('body').innerHTML = '<div class="empty">vuelve al ' +
+        '<a href="/hypotheses.html">tablero</a></div>';
+    });
+}
+</script>
+</body>
+</html>

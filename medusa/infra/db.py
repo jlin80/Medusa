@@ -83,7 +83,7 @@ _COLUMN_MIGRATIONS: tuple[str, ...] = (
 
 def _extra_migrations() -> tuple[str, ...]:
     """Migraciones de los paquetes ADITIVOS (Market Intelligence Graph, Wallet
-    Intelligence e Information Flow Engine).
+    Intelligence, Information Flow Engine e Hypothesis Engine).
 
     Se importan aqui dentro, no arriba, y cada uno en su propio try: un fallo de
     importacion de un paquete opcional no puede impedir el arranque del engine
@@ -106,6 +106,11 @@ def _extra_migrations() -> tuple[str, ...]:
     try:
         from medusa.intelligence.flow.migrations import FLOW_MIGRATIONS
         out += FLOW_MIGRATIONS
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from medusa.intelligence.hypothesis.migrations import HYPOTHESIS_MIGRATIONS
+        out += HYPOTHESIS_MIGRATIONS
     except Exception:  # noqa: BLE001
         pass
     return out

@@ -164,6 +164,19 @@ try:
 except Exception as exc:  # noqa: BLE001
     log.warning("api.flow_router_unavailable", error=err(exc))
 
+# Hypothesis Engine: router ADITIVO en /hypotheses. Mismo blindaje que los tres
+# anteriores. Genera hipotesis a partir de los datos observados y las valida con
+# datos posteriores a su creacion; observa asociacion, jamas causalidad. No expone
+# ningun endpoint que opere, y tampoco ninguno para crear una hipotesis a mano.
+try:
+    from medusa.intelligence.hypothesis.api import get_service as _hyp_service
+    from medusa.intelligence.hypothesis.api import router as hypothesis_router
+
+    _hyp_service(log)
+    app.include_router(hypothesis_router)
+except Exception as exc:  # noqa: BLE001
+    log.warning("api.hypothesis_router_unavailable", error=err(exc))
+
 # Sin login por diseño -> solo debe exponerse en LAN/VPN.
 app.add_middleware(
     CORSMiddleware,

@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Medusa · Hypothesis Engine</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#121820; --panel-2:#171f2a; --line:#243040;
+      --txt:#e6edf3; --muted:#8b9bb0; --accent:#2ec4b6; --accent-2:#3498db;
+      --green:#2ecc71; --red:#e74c3c; --orange:#e67e22; --purple:#9b59b6;
+      --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--txt);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:16px}
+    a{color:var(--accent);text-decoration:none}
+    a:hover{text-decoration:underline}
+    .wrap{max-width:1500px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+
+    .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+      background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+    .brand{font-size:19px;font-weight:700;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+    .brand small{color:var(--muted);font-weight:400;font-size:12px;letter-spacing:0}
+    .spacer{flex:1}
+    .chip{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
+      padding:5px 12px;font-size:12px;color:var(--muted);white-space:nowrap}
+    .chip b{color:var(--txt)}
+
+    button,select,input{background:var(--panel-2);color:var(--txt);border:1px solid var(--line);
+      border-radius:8px;padding:7px 13px;cursor:pointer;font-size:13px;transition:.15s}
+    button:hover,select:hover{border-color:var(--accent)}
+    button:disabled{opacity:.4;cursor:not-allowed}
+
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+    .card .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+    .card .v{font-size:21px;font-weight:700;margin-top:4px;font-family:var(--mono)}
+
+    *{scrollbar-width:thin;scrollbar-color:#2b3646 transparent}
+    ::-webkit-scrollbar{width:9px;height:9px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#2b3646;border-radius:999px;
+      border:2px solid transparent;background-clip:padding-box}
+
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    @media(max-width:1100px){.grid{grid-template-columns:1fr}}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+      display:flex;flex-direction:column}
+    .phead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);
+      background:var(--panel-2);flex-wrap:wrap}
+    .phead h2{font-size:13px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--muted)}
+    .pbody{padding:12px 14px;overflow:auto;max-height:460px}
+
+    table{width:100%;border-collapse:collapse;font-size:12.5px}
+    th{text-align:left;color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;
+      padding:6px 8px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+    td{padding:7px 8px;border-bottom:1px solid #1b2430;font-size:12.5px;vertical-align:middle}
+    td.m{font-family:var(--mono);font-size:12px}
+    tr:last-child td{border-bottom:none}
+    tr.click{cursor:pointer}
+    tr.click:hover td{background:#161f2b}
+    .empty{color:var(--muted);text-align:center;padding:24px;font-size:13px}
+
+    .banner{border-radius:8px;padding:9px 12px;font-size:12.5px;margin-bottom:11px;line-height:1.45}
+    .banner.lock{background:#12211f;border:1px solid #1e4d46;color:#8fe3d8}
+    .banner.warn{background:#241a10;border:1px solid #5b452b;color:#ffce9c}
+    .banner.err{background:#241414;border:1px solid #5b2b2b;color:#ff9c9c}
+    .note{color:#8b9bb0;font-size:11.5px;margin-top:10px;line-height:1.6}
+    .foot{color:#4a5a6e;font-size:11px;text-align:center;padding:4px 0 10px}
+
+    /* aviso epistemico: es la pieza mas importante de la pagina */
+    .epistemic{background:#1a1424;border:1px solid #43305e;color:#d9c7f0;
+      border-radius:10px;padding:11px 14px;font-size:12.5px;line-height:1.6}
+    .epistemic b{color:#f0e6ff}
+
+    /* tablero por estado */
+    .board{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    @media(max-width:1000px){.board{grid-template-columns:repeat(2,1fr)}}
+    .col{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+      display:flex;flex-direction:column;overflow:hidden}
+    .colhead{padding:9px 12px;border-bottom:1px solid var(--line);background:var(--panel-2);
+      display:flex;align-items:center;gap:8px}
+    .colhead .dot{width:9px;height:9px;border-radius:999px;flex:none}
+    .colhead .nm{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:600}
+    .colhead .ct{margin-left:auto;font-family:var(--mono);font-size:13px;font-weight:700}
+    .colbody{padding:9px;display:flex;flex-direction:column;gap:8px;overflow:auto;max-height:420px}
+    .hcard{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;
+      padding:9px 10px;cursor:pointer;transition:.15s}
+    .hcard:hover{border-color:var(--accent)}
+    .hcard .d{font-size:12.5px;line-height:1.45}
+    .hcard .meta{display:flex;align-items:center;gap:7px;margin-top:7px;flex-wrap:wrap;
+      font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+
+    /* medidor de confianza: la barra solida es lo que la evidencia sostiene */
+    .conf{position:relative;height:8px;background:#1b2430;border-radius:999px;min-width:70px;flex:1}
+    .conf>.fill{position:absolute;top:0;bottom:0;left:0;border-radius:999px;transition:width .4s}
+
+    .tag{border-radius:999px;padding:2px 8px;font-size:10px;font-family:var(--mono);
+      border:1px solid var(--line);background:#0f1620;color:var(--muted);white-space:nowrap}
+    .tag.form{color:#9fd0ff;border-color:#2a4361}
+    .weak{color:#5b6b80}
+    .pos{color:var(--green)} .neg{color:var(--red)}
+    svg{display:block;width:100%;height:auto}
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">🔬 HYPOTHESIS ENGINE <small>hipótesis generadas a partir de los datos, validadas fuera de muestra</small></div>
+    <span class="chip" id="engstate">—</span>
+    <div class="spacer"></div>
+    <a href="/flow.html"><button>🌊 Information Flow</button></a>
+    <a href="/research.html"><button>🕸️ Research Lab</button></a>
+    <a href="/index.html"><button>Panel</button></a>
+    <button id="runbtn">Ejecutar pasada</button>
+  </div>
+
+  <div id="alert"></div>
+
+  <div class="epistemic">
+    <b>Ninguna de estas hipótesis está escrita en el código</b>, y ninguna se valida con
+    los datos que la generaron. Lo que hay programado es una <b>gramática</b> de tres
+    formas — monótona, contraste de grupos y umbral — que se cruza con las variables que
+    los datos sostienen; el enunciado concreto sale de la observación. Y
+    <code>created_at</code> es una <b>valla</b>: <code>sample_count</code> cuenta sólo las
+    observaciones <b>posteriores</b> a la creación de la hipótesis, así que
+    <code>confidence</code> vale <b>0.00</b> hasta que llegue realidad nueva. Sin esa valla
+    el motor sería una máquina de confirmarse: propondría la relación más llamativa de la
+    ventana y la «validaría» con la misma ventana.
+    <br><br>
+    Todo esto es <b>asociación, jamás causalidad</b>. No hay contrafactual, no hay
+    asignación aleatoria y no hay control de confusores — por eso los enunciados dicen
+    «a mayor X, menor Y» y nunca «X reduce Y».
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <!-- EL TABLERO: los cuatro estados -->
+  <div class="board" id="board"></div>
+
+  <div class="panel">
+    <div class="phead"><h2>Todas las hipótesis</h2>
+      <div class="spacer"></div>
+      <select id="fstatus">
+        <option value="">todos los estados</option>
+        <option value="proposed">proposed</option>
+        <option value="testing">testing</option>
+        <option value="validated">validated</option>
+        <option value="rejected">rejected</option>
+      </select>
+      <select id="fsource"><option value="">todas las fuentes</option></select>
+      <select id="fform">
+        <option value="">todas las formas</option>
+        <option value="monotone">monotone</option>
+        <option value="group_contrast">group_contrast</option>
+        <option value="threshold">threshold</option>
+      </select>
+      <select id="forder">
+        <option value="confidence">por confianza</option>
+        <option value="samples">por muestra fuera de muestra</option>
+        <option value="effect">por efecto</option>
+        <option value="recent">por actualización</option>
+        <option value="created">por creación</option>
+      </select>
+    </div>
+    <div class="pbody" id="listbox" style="max-height:none"><div class="empty">cargando…</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="phead"><h2>Fuentes y lineage</h2><div class="spacer"></div>
+        <span class="chip" id="srcmeta">—</span></div>
+      <div class="pbody" id="srcbox"><div class="empty">cargando…</div></div>
+    </div>
+    <div class="panel">
+      <div class="phead"><h2>Últimas transiciones</h2><div class="spacer"></div>
+        <span class="chip">el expediente</span></div>
+      <div class="pbody" id="transbox"><div class="empty">cargando…</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="phead"><h2>Evolución del tablero</h2><div class="spacer"></div>
+      <span class="chip" id="tlrange">—</span></div>
+    <div class="pbody">
+      <svg id="tlchart" viewBox="0 0 600 180" preserveAspectRatio="none" style="height:180px"></svg>
+      <div class="note">
+        <span style="color:#8b9bb0">■</span> propuestas ·
+        <span style="color:#3498db">■</span> en pruebas ·
+        <span style="color:#2ecc71">■</span> validadas ·
+        <span style="color:#e74c3c">■</span> rechazadas.
+        Una curva de validadas que crece mientras las rechazadas se quedan planas es
+        sospechosa, no buena: significaría que el motor casi nunca se equivoca al proponer,
+        y proponer a partir de la relación más llamativa de una ventana se equivoca a menudo.
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">Hypothesis Engine · observa asociación, no causalidad · no opera, no emite señales</div>
+</div>
+
+<script>
+const API = '/api';
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hhmm = ts => { try { return new Date(ts).toLocaleString('es-ES',{hour12:false}); } catch { return '—'; } };
+const num = (v, d=2) => (v == null ? '—' : Number(v).toFixed(d));
+const nfmt = v => (v == null ? '—' : Number(v).toLocaleString('es-ES'));
+const sgn = v => (v == null ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(3));
+
+const STATUS = {
+  proposed:  {color:'#8b9bb0', label:'proposed',  hint:'encontrada; sin datos que no hubiera visto'},
+  testing:   {color:'#3498db', label:'testing',   hint:'llegando observaciones nuevas'},
+  validated: {color:'#2ecc71', label:'validated', hint:'replica fuera de muestra'},
+  rejected:  {color:'#e74c3c', label:'rejected',  hint:'contradicha o no replica — terminal'},
+};
+
+async function api(path, opts) {
+  const r = await fetch(API + path, opts);
+  if (!r.ok) {
+    let detail = r.statusText;
+    try { detail = (await r.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return r.json();
+}
+
+function banner(kind, html) { $('alert').innerHTML = `<div class="banner ${kind}">${html}</div>`; }
+
+// La barra de confianza. Se pinta con el color del estado para que un 0.80 en
+// `rejected` (imposible, pero) no se lea como algo bueno.
+function confBar(value, status) {
+  const v = Math.max(0, Math.min(1, value || 0));
+  const c = (STATUS[status] || STATUS.proposed).color;
+  return `<span class="conf" title="fuerza de la evidencia fuera de muestra, no P(cierta)">
+    <span class="fill" style="width:${(v*100).toFixed(1)}%;background:${c}"></span></span>`;
+}
+
+async function loadInfo() {
+  try {
+    const info = await api('/hypotheses/info');
+    $('engstate').innerHTML = info.enabled
+      ? '<span style="color:var(--green)">■</span> generación automática activa'
+      : '<span style="color:var(--orange)">■</span> automático apagado (HYPOTHESIS_ENABLED=false)';
+    if (!info.enabled) {
+      banner('lock', '🔒 <b>El Hypothesis Engine está apagado en el .env</b> ' +
+        '(HYPOTHESIS_ENABLED=false): no genera ni evalúa solo. Puedes lanzar una pasada a ' +
+        'mano con «Ejecutar pasada» — lee tablas y sólo escribe en las suyas (hyp_*). ' +
+        'Ojo: una pasada manual <b>no puede validar nada</b>, porque las hipótesis que ' +
+        'nazcan en ella tendrán la valla puesta en este mismo instante.');
+    }
+    const sel = $('fsource');
+    (info.sources || []).forEach(s => {
+      const o = document.createElement('option');
+      o.value = s.name; o.textContent = s.name;
+      sel.appendChild(o);
+    });
+  } catch (e) {
+    $('engstate').textContent = 'API no disponible';
+    banner('err', 'No se pudo hablar con la API: ' + esc(e.message));
+  }
+}
+
+async function loadStats() {
+  let st;
+  try { st = await api('/hypotheses/stats'); } catch { return; }
+  const cards = [
+    ['Hipótesis', nfmt(st.total)],
+    ['Validadas', nfmt(st.validated)],
+    ['Rechazadas', nfmt(st.rejected)],
+    ['En pruebas', nfmt(st.testing)],
+    ['Tasa de validación', st.validation_rate == null ? '—' : (st.validation_rate*100).toFixed(0)+'%'],
+    ['Observaciones', nfmt(st.observations)],
+    ['Contrastes probados', nfmt(st.contrasts_tested)],
+    ['Confianza media', num(st.avg_confidence)],
+  ];
+  $('cards').innerHTML = cards.map(([k,v]) =>
+    `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+}
+
+// ------------------------------------------------------------- el tablero --
+async function loadBoard() {
+  let counts, all;
+  try {
+    counts = await api('/hypotheses/board');
+    all = await api('/hypotheses?limit=400&order_by=confidence');
+  } catch { return; }
+  const byStatus = {proposed:[], testing:[], validated:[], rejected:[]};
+  all.forEach(h => (byStatus[h.status] || byStatus.proposed).push(h));
+
+  $('board').innerHTML = Object.keys(STATUS).map(st => {
+    const meta = STATUS[st], items = byStatus[st] || [];
+    return `<div class="col">
+      <div class="colhead">
+        <span class="dot" style="background:${meta.color}"></span>
+        <span class="nm" title="${meta.hint}">${meta.label}</span>
+        <span class="ct" style="color:${meta.color}">${counts[st] ?? 0}</span>
+      </div>
+      <div class="colbody">
+        ${items.length ? items.slice(0,40).map(h => `
+          <div class="hcard" onclick="open_h('${esc(h.id)}')">
+            <div class="d">${esc(h.description)}</div>
+            <div class="meta">
+              <span class="tag form">${esc(h.form)}</span>
+              ${confBar(h.confidence, h.status)}
+              <span>${num(h.confidence)}</span>
+              <span class="weak">n=${h.sample_count}</span>
+            </div>
+          </div>`).join('')
+        : '<div class="empty">vacío</div>'}
+      </div></div>`;
+  }).join('');
+}
+
+function open_h(id) { location.href = '/hypothesis.html?id=' + encodeURIComponent(id); }
+
+// -------------------------------------------------------------- el listado --
+async function loadList() {
+  const qs = new URLSearchParams({limit:'200', order_by:$('forder').value});
+  if ($('fstatus').value) qs.set('status', $('fstatus').value);
+  if ($('fsource').value) qs.set('source', $('fsource').value);
+  if ($('fform').value)   qs.set('form', $('fform').value);
+  let hs;
+  try { hs = await api('/hypotheses?' + qs); } catch (e) {
+    $('listbox').innerHTML = '<div class="empty">no se pudo cargar: ' + esc(e.message) + '</div>';
+    return;
+  }
+  if (!hs.length) {
+    $('listbox').innerHTML = '<div class="empty">ninguna hipótesis con esos filtros — ' +
+      'si el motor no ha corrido nunca, lanza una pasada</div>';
+    return;
+  }
+  $('listbox').innerHTML = `
+    <table><thead><tr>
+      <th>Hipótesis</th><th>Estado</th><th>Confianza</th>
+      <th>Fuera de muestra</th><th>Efecto (test)</th><th>Efecto (hallazgo)</th>
+      <th>Contrastes</th><th>Creada</th></tr></thead><tbody>
+    ${hs.map(h => `<tr class="click" onclick="open_h('${esc(h.id)}')">
+      <td>${esc(h.description)}
+          <div class="meta" style="margin-top:5px;display:flex;gap:6px">
+            <span class="tag form">${esc(h.form)}</span>
+            <span class="tag">${esc(h.source)}</span></div></td>
+      <td><span class="tag" style="color:${STATUS[h.status].color};border-color:${STATUS[h.status].color}44">
+          ${esc(h.status)}</span></td>
+      <td class="m" style="min-width:120px">${confBar(h.confidence, h.status)}
+          <span class="weak">${num(h.confidence)}</span></td>
+      <td class="m">${h.sample_count}</td>
+      <td class="m ${h.test.effect>0?'pos':(h.test.effect<0?'neg':'')}">
+          ${h.test.n ? sgn(h.test.effect) : '<span class="weak">—</span>'}
+          ${h.test.n ? `<span class="weak">[${sgn(h.test.lower)}, ${sgn(h.test.upper)}]</span>` : ''}</td>
+      <td class="m weak">${sgn(h.discovery.effect)} <span class="weak">n=${h.discovery.n}</span></td>
+      <td class="m weak">${nfmt(h.tested_in_pass)}</td>
+      <td class="m weak">${hhmm(h.created_at)}</td>
+    </tr>`).join('')}
+    </tbody></table>
+    <div class="note">
+      <b>Cómo leer esta tabla.</b> «Efecto (hallazgo)» es lo que se midió en la ventana que
+      propuso la hipótesis: es <i>dentro</i> de muestra y por tanto <b>no es evidencia</b>, son
+      los mismos datos que eligieron el enunciado. La única columna que pesa es «Efecto (test)»,
+      medida sólo con observaciones posteriores a la creación. «Contrastes» es cuántas
+      relaciones se probaron en esa pasada: un hallazgo al 5% entre 400 contrastes es lo que
+      hace el azar veinte veces, y por eso el motor aplica Benjamini-Hochberg sobre todos ellos.
+    </div>`;
+}
+['fstatus','fsource','fform','forder'].forEach(id => $(id).onchange = loadList);
+
+// -------------------------------------------------------------- fuentes ----
+async function loadSources() {
+  let specs, cov;
+  try {
+    specs = await api('/hypotheses/sources');
+    cov = await api('/hypotheses/coverage');
+  } catch { return; }
+  const byName = {}; cov.forEach(c => byName[c.source] = c);
+  $('srcmeta').innerHTML = `<b>${specs.length}</b> fuentes`;
+  $('srcbox').innerHTML = `
+    <table><thead><tr><th>Fuente</th><th>Unidad</th><th>Hipótesis</th>
+      <th>Parejas bloqueadas</th></tr></thead><tbody>
+    ${specs.map(s => {
+      const c = byName[s.name] || {};
+      return `<tr>
+        <td>${esc(s.name)}<div class="weak" style="font-size:11px">${esc(s.title)}</div></td>
+        <td class="m">${esc(s.unit)}</td>
+        <td class="m">${(c.validated||0)}<span class="weak">/${(c.proposed||0)+(c.testing||0)+(c.validated||0)+(c.rejected||0)}</span></td>
+        <td class="m weak">${s.blocked_pairs.length
+          ? s.blocked_pairs.map(p => esc(p[0])+'→'+esc(p[1])).join(', ')
+          : '—'}</td></tr>`;
+    }).join('')}
+    </tbody></table>
+    <div class="note">
+      <b>Unidad de observación.</b> <code>event</code> = una fila es un hecho que pasó una vez
+      (una señal resuelta, un trade cerrado). <code>entity</code> = la tabla guarda el
+      <i>estado actual</i> de algo y se reescribe: de esas fuentes se conserva sólo la
+      <b>primera</b> vez que se vio a cada entidad, porque cosecharlas en cada pasada metería
+      la misma wallet cuarenta veces al día y estrecharía los intervalos de confianza hasta
+      hacer significativo casi todo.
+      <br><br>
+      <b>Parejas bloqueadas.</b> Relaciones ligadas por definición (<code>roi</code> se calcula
+      dividiendo por <code>entry_price</code>). Son las más fuertes del esquema, así que un
+      motor que propone solo las encontraría primero, y no serían un hallazgo sino una división.
+      Se bloquea el contraste <b>tautológico</b>, nunca uno incómodo.
+    </div>`;
+}
+
+// ---------------------------------------------------------- transiciones ----
+async function loadTransitions() {
+  let ts;
+  try { ts = await api('/hypotheses/transitions?limit=40'); } catch { return; }
+  if (!ts.length) { $('transbox').innerHTML = '<div class="empty">ningún cambio de estado todavía</div>'; return; }
+  $('transbox').innerHTML = `
+    <table><thead><tr><th>Cuándo</th><th>Cambio</th><th>n</th><th>Motivo</th></tr></thead><tbody>
+    ${ts.map(t => `<tr class="click" onclick="open_h('${esc(t.hypothesis_id)}')">
+      <td class="m weak">${hhmm(t.ts)}</td>
+      <td class="m"><span class="weak">${esc(t.from)}</span> →
+        <span style="color:${(STATUS[t.to]||STATUS.proposed).color}">${esc(t.to)}</span></td>
+      <td class="m">${t.sample_count}</td>
+      <td class="weak" style="font-size:11.5px">${esc(t.reason)}</td></tr>`).join('')}
+    </tbody></table>
+    <div class="note">Append-only: los veredictos no se borran. Una hipótesis
+    <b>rechazada es terminal</b> — no vuelve a «proposed» ni aunque el generador la
+    redescubra, porque si volviera bastaría con esperar la pasada en la que el ruido
+    saliese a favor.</div>`;
+}
+
+// -------------------------------------------------------------- timeline ----
+async function loadTimeline() {
+  let pts;
+  try { pts = await api('/hypotheses/timeline?limit=200'); } catch { return; }
+  const svg = $('tlchart');
+  if (!pts || pts.length < 2) {
+    svg.innerHTML = '<text x="300" y="90" fill="#8b9bb0" font-size="12" text-anchor="middle">' +
+      'hacen falta al menos dos pasadas para dibujar la curva</text>';
+    $('tlrange').textContent = (pts && pts.length ? pts.length : 0) + ' pasadas';
+    return;
+  }
+  const keys = [['proposed','#8b9bb0'],['testing','#3498db'],
+                ['validated','#2ecc71'],['rejected','#e74c3c']];
+  const hi = Math.max(1, ...pts.map(p => Math.max(...keys.map(([k]) => p[k] || 0))));
+  const x = i => (i / (pts.length - 1)) * 600;
+  const y = v => 172 - (v / hi) * 164;
+  svg.innerHTML = keys.map(([k,c]) =>
+    `<path d="${pts.map((p,i) => `${i?'L':'M'}${x(i).toFixed(1)},${y(p[k]||0).toFixed(1)}`).join(' ')}"
+       fill="none" stroke="${c}" stroke-width="1.8" vector-effect="non-scaling-stroke"/>`).join('');
+  $('tlrange').textContent =
+    `${pts.length} pasadas · ${hhmm(pts[0].ts)} → ${hhmm(pts[pts.length-1].ts)}`;
+}
+
+$('runbtn').onclick = async () => {
+  const btn = $('runbtn');
+  btn.disabled = true; btn.textContent = 'Analizando…';
+  try {
+    const r = await api('/hypotheses/run', {method:'POST'});
+    banner('lock', `✅ Pasada completada en ${r.build_seconds}s: <b>${r.tested}</b> ` +
+      `contrastes sobre <b>${nfmt(r.observations)}</b> observaciones → ` +
+      `<b>${r.new_proposals}</b> hipótesis nuevas y <b>${r.transitions}</b> transiciones. ` +
+      `Las nuevas nacen con la valla puesta ahora, así que su confianza es 0.00 hasta ` +
+      `que lleguen observaciones que no hayan visto.`);
+  } catch (e) {
+    banner('err', 'No se pudo completar la pasada: ' + esc(e.message));
+  }
+  btn.disabled = false; btn.textContent = 'Ejecutar pasada';
+  refresh();
+};
+
+function refresh() {
+  loadStats(); loadBoard(); loadList(); loadSources(); loadTransitions(); loadTimeline();
+}
+loadInfo(); refresh();
+// El motor corre como mucho cada hora: refrescar cada 60 s sobra de largo.
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>
